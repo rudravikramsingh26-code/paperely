@@ -25,7 +25,7 @@ main{max-width:1080px;margin:0 auto;padding:58px 24px 80px}.intro{margin-bottom:
 <body>
 <header><div class="logo">paperly<span>.</span></div><div class="header-note">Your documents. Nothing extra.</div></header>
 <main>
-<section class="intro"><div class="eyebrow">A simple PDF workspace</div><h1>PDF, simply.</h1><p>Open a document and see every page. Or turn your images into one PDF.</p></section>
+<section class="intro" id="intro"><div class="eyebrow">A simple PDF workspace</div><h1>PDF, simply.</h1><p>Open a document and see every page. Or turn your images into one PDF.</p></section>
 <section class="actions" id="home">
  <article class="action"><div class="icon">▤</div><h2>Open a PDF</h2><p>View every page together, from the first to the last.</p><button class="primary" id="openBtn">Choose PDF</button><input id="pdfInput" type="file" accept=".pdf,application/pdf" hidden></article>
  <article class="action"><div class="icon">▧</div><h2>Create a PDF</h2><p>Choose images, arrange them into a PDF and name your file.</p><button id="createBtn">Create PDF</button></article>
@@ -50,7 +50,7 @@ import { jsPDF } from 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/+esm';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
 const $=id=>document.getElementById(id);
 let activePdf=null, imageFiles=[], imageUrls=[], resizeTimer;
-function show(section){$('home').style.display=section==='home'?'grid':'none';$('viewer').style.display=section==='viewer'?'block':'none';$('creator').style.display=section==='creator'?'block':'none';$('privacy').style.display=section==='home'?'block':'none';window.scrollTo({top:0,behavior:'instant'});}
+function show(section){$('home').style.display=section==='home'?'grid':'none';$('intro').style.display=section==='home'?'block':'none';$('viewer').style.display=section==='viewer'?'block':'none';$('creator').style.display=section==='creator'?'block':'none';$('privacy').style.display=section==='home'?'block':'none';window.scrollTo({top:0,behavior:'instant'});}
 function validPdf(f){return f&&(f.type==='application/pdf'||f.name.toLowerCase().endsWith('.pdf'));}
 async function openPdf(file){
  if(!validPdf(file))return;
