@@ -642,13 +642,13 @@ public class MainActivity extends Activity {
                 float dy = event.getY() - gestureDownY;
                 if (Math.abs(dx) > dp(42) && Math.abs(dx) > Math.abs(dy) * 1.15f) {
                     // Natural page-turn gesture: swipe left for next, swipe right for previous.
-                    navigateToPage(pageIndex + (dx < 0 ? 1 : -1));
+                    navigatePreviewPage(pageIndex + (dx < 0 ? 1 : -1));
                 } else if (Math.abs(dx) < dp(14) && Math.abs(dy) < dp(14)) {
                     // Tap zones: left side goes back, right side goes forward.
                     float x = event.getX();
                     float width = Math.max(1, pageView.getWidth());
-                    if (x <= width * 0.28f) navigateToPage(pageIndex - 1);
-                    else if (x >= width * 0.72f) navigateToPage(pageIndex + 1);
+                    if (x <= width * 0.28f) navigatePreviewPage(pageIndex - 1);
+                    else if (x >= width * 0.72f) navigatePreviewPage(pageIndex + 1);
                 }
                 return true;
             case MotionEvent.ACTION_CANCEL:
