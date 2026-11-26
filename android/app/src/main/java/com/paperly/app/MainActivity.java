@@ -82,6 +82,7 @@ public class MainActivity extends Activity {
     private TextView compressionStatus;
     private Spinner compressionLevelSpinner;
     private Spinner compressionFormatSpinner;
+    private Button compressionAddButton;
     private Button compressionRunButton;
     private Button compressionSaveButton;
     private volatile int compressionTaskToken = 0;
@@ -1114,11 +1115,11 @@ public class MainActivity extends Activity {
         TextView addTitle = text("Choose images to compress", 16, INK, true);
         TextView addHint = text("JPG / JPEG, PNG, WebP and other Android-supported images", 12, MUTED, false);
         addHint.setGravity(Gravity.CENTER);
-        Button add = button("Choose images", true);
-        add.setOnClickListener(v -> pickCompressionImages());
+        compressionAddButton = button("Choose images", true);
+        compressionAddButton.setOnClickListener(v -> pickCompressionImages());
         drop.addView(addTitle);
         drop.addView(addHint, margins(0, dp(4), 0, dp(14)));
-        drop.addView(add);
+        drop.addView(compressionAddButton);
         content.addView(drop);
 
         TextView selectedLabel = text("SELECTED IMAGES", 10, MUTED, true);
@@ -1175,8 +1176,14 @@ public class MainActivity extends Activity {
         AdapterView.OnItemSelectedListener invalidateListener = new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (!compressedImages.isEmpty()) {
-                    clearCompressedImageResults();
+                boolean cancelledRun = compressionRunning;
+                boolean hadResults = !compressedImages.isEmpty();
+                if (cancelledRun) {
+                    compressionTaskToken++;
+                    compressionRunning = false;
+                }
+                if (hadResults) clearCompressedImageResults();
+                if (cancelledRun || hadResults) {
                     refreshCompressionPreview();
                     if (compressionStatus != null) compressionStatus.setText(
                             "Settings changed. Compress the images again to apply them.");
@@ -1213,6 +1220,10 @@ public class MainActivity extends Activity {
     }
 
     private void addCompressionImages(Intent data) {
+        if (compressionRunning) {
+            compressionTaskToken++;
+            compressionRunning = false;
+        }
         clearCompressedImageResults();
         if (data.getClipData() != null) {
             for (int i = 0; i < data.getClipData().getItemCount(); i++) {
@@ -1306,6 +1317,9 @@ public class MainActivity extends Activity {
                 compressionPreview.addView(row, margins(0, 0, 0, dp(8)));
             }
         }
+        if (compressionAddButton != null) compressionAddButton.setEnabled(!compressionRunning);
+        if (compressionLevelSpinner != null) compressionLevelSpinner.setEnabled(!compressionRunning);
+        if (compressionFormatSpinner != null) compressionFormatSpinner.setEnabled(!compressionRunning);
         if (compressionRunButton != null) compressionRunButton.setEnabled(
                 !compressionSources.isEmpty() && !compressionRunning);
         if (compressionSaveButton != null) compressionSaveButton.setEnabled(
@@ -1401,6 +1415,9 @@ public class MainActivity extends Activity {
         final int quality = qualityChoice == 0 ? 92 : (qualityChoice == 2 ? 66 : 80);
         final int token = ++compressionTaskToken;
         compressionRunning = true;
+        compressionAddButton.setEnabled(false);
+        compressionLevelSpinner.setEnabled(false);
+        compressionFormatSpinner.setEnabled(false);
         compressionRunButton.setEnabled(false);
         compressionSaveButton.setEnabled(false);
         compressionStatus.setText("Preparing images…");
@@ -1409,6 +1426,10 @@ public class MainActivity extends Activity {
             List<CompressedImage> results = new ArrayList<>();
             try {
                 for (int i = 0; i < sources.size(); i++) {
+                    if (token != compressionTaskToken) {
+                        for (CompressedImage item : results) if (item.outputFile.exists()) item.outputFile.delete();
+                        return;
+                    }
                     Uri uri = sources.get(i);
                     String name = displayName(uri);
                     String mime = chooseCompressionMime(uri, formatChoice);
