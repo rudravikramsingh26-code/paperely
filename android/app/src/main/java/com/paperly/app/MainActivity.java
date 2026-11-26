@@ -96,6 +96,7 @@ public class MainActivity extends Activity {
     private int currentPageIndex = 0;
     private float gestureDownX;
     private float gestureDownY;
+    private View.OnTouchListener singlePageTouchListener;
     private Runnable refreshRunnable;
 
     @Override
@@ -443,9 +444,18 @@ public class MainActivity extends Activity {
         int targetWidthDp = Math.max(260, (int) (getResources().getDisplayMetrics().widthPixels /
                 getResources().getDisplayMetrics().density) - 46);
         for (int i = 0; i < count; i++) {
+            final int pageIndex = i;
             LinearLayout card = column();
             card.setPadding(dp(8), dp(8), dp(8), dp(8));
             card.setBackground(panelBackground());
+            card.setClickable(true);
+            card.setFocusable(true);
+            card.setOnClickListener(v -> {
+                if (!singlePageMode) {
+                    currentPageIndex = pageIndex;
+                    setPageMode(true);
+                }
+            });
             ImageView image = new ImageView(this);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setBackgroundColor(WHITE);
@@ -458,6 +468,10 @@ public class MainActivity extends Activity {
             pageStack.addView(card, margins(0, 0, 0, dp(14)));
             pageImages[i] = image;
             pageCards[i] = card;
+            image.setOnTouchListener((view, event) -> {
+                if (!singlePageMode) return false;
+                return handleSinglePageTouch(view, event, pageIndex);
+            });
         }
 
         pageScroll.setOnScrollChangeListener((View v, int x, int y, int oldX, int oldY) -> schedulePageRefresh());
@@ -481,6 +495,33 @@ public class MainActivity extends Activity {
             }
             refreshVisiblePages();
         });
+    }
+
+    private boolean handleSinglePageTouch(View pageView, MotionEvent event, int pageIndex) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                gestureDownX = event.getX();
+                gestureDownY = event.getY();
+                return true;
+            case MotionEvent.ACTION_UP:
+                float dx = event.getX() - gestureDownX;
+                float dy = event.getY() - gestureDownY;
+                if (Math.abs(dx) > dp(42) && Math.abs(dx) > Math.abs(dy) * 1.15f) {
+                    // Natural page-turn gesture: swipe left for next, swipe right for previous.
+                    navigateToPage(pageIndex + (dx < 0 ? 1 : -1));
+                } else if (Math.abs(dx) < dp(14) && Math.abs(dy) < dp(14)) {
+                    // Tap zones: left side goes back, right side goes forward.
+                    float x = event.getX();
+                    float width = Math.max(1, pageView.getWidth());
+                    if (x <= width * 0.28f) navigateToPage(pageIndex - 1);
+                    else if (x >= width * 0.72f) navigateToPage(pageIndex + 1);
+                }
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                return true;
+            default:
+                return true;
+        }
     }
 
     private void applyPageVisibility() {
