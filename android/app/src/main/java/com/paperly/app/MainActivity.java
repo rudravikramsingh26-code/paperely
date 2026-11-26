@@ -1,6 +1,7 @@
 package com.paperly.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.ClipData;
 import android.content.res.ColorStateList;
@@ -19,11 +20,13 @@ import android.graphics.pdf.PdfRenderer;
 import androidx.core.content.FileProvider;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.InputType;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -83,6 +86,16 @@ public class MainActivity extends Activity {
     private Uri currentDocumentUri;
     private File currentPreviewFile;
     private Button savePreviewButton;
+    private Button allPagesButton;
+    private Button singlePageButton;
+    private Button previousPageButton;
+    private Button nextPageButton;
+    private TextView pageCounter;
+    private LinearLayout pageNavigation;
+    private boolean singlePageMode = false;
+    private int currentPageIndex = 0;
+    private float gestureDownX;
+    private float gestureDownY;
     private Runnable refreshRunnable;
 
     @Override
@@ -257,6 +270,8 @@ public class MainActivity extends Activity {
         requestedPages.clear();
         renderedPages.clear();
         wantedPages.clear();
+        currentPageIndex = 0;
+        singlePageMode = false;
         showLoadingDocument(name);
 
         pdfExecutor.execute(() -> {
@@ -359,6 +374,20 @@ public class MainActivity extends Activity {
         }
         screen.addView(top, margins(0, 0, 0, dp(12)));
 
+        LinearLayout modeRow = new LinearLayout(this);
+        modeRow.setOrientation(LinearLayout.HORIZONTAL);
+        modeRow.setPadding(dp(4), dp(4), dp(4), dp(4));
+        modeRow.setBackground(round(Color.rgb(238, 238, 234), 0, 14));
+        allPagesButton = button("All pages", true);
+        singlePageButton = button("One page", false);
+        allPagesButton.setTextSize(12);
+        singlePageButton.setTextSize(12);
+        modeRow.addView(allPagesButton, new LinearLayout.LayoutParams(0, dp(40), 1));
+        modeRow.addView(singlePageButton, new LinearLayout.LayoutParams(0, dp(40), 1));
+        allPagesButton.setOnClickListener(v -> setPageMode(false));
+        singlePageButton.setOnClickListener(v -> setPageMode(true));
+        screen.addView(modeRow, margins(0, 0, 0, dp(10)));
+
         pageScroll = new ScrollView(this);
         pageScroll.setFillViewport(false);
         pageScroll.setClipToPadding(false);
@@ -367,6 +396,48 @@ public class MainActivity extends Activity {
         pageStack.setPadding(dp(3), dp(5), dp(3), dp(18));
         pageScroll.addView(pageStack);
         screen.addView(pageScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        pageNavigation = new LinearLayout(this);
+        pageNavigation.setGravity(Gravity.CENTER_VERTICAL);
+        pageNavigation.setPadding(dp(4), dp(8), dp(4), dp(2));
+        previousPageButton = button("‹", false);
+        nextPageButton = button("›", false);
+        previousPageButton.setTextSize(24);
+        nextPageButton.setTextSize(24);
+        pageCounter = text("Page 1 of " + count + " · Go to page", 13, INK, true);
+        pageCounter.setGravity(Gravity.CENTER);
+        pageCounter.setPadding(dp(12), dp(10), dp(12), dp(10));
+        pageCounter.setBackground(round(WHITE, LINE, 12));
+        pageCounter.setOnClickListener(v -> showPagePicker());
+        LinearLayout.LayoutParams counterLp = new LinearLayout.LayoutParams(0, dp(44), 1);
+        counterLp.leftMargin = dp(12);
+        counterLp.rightMargin = dp(12);
+        pageNavigation.addView(previousPageButton, new LinearLayout.LayoutParams(dp(54), dp(44)));
+        pageNavigation.addView(pageCounter, counterLp);
+        pageNavigation.addView(nextPageButton, new LinearLayout.LayoutParams(dp(54), dp(44)));
+        previousPageButton.setOnClickListener(v -> navigateToPage(currentPageIndex - 1));
+        nextPageButton.setOnClickListener(v -> navigateToPage(currentPageIndex + 1));
+        pageNavigation.setVisibility(View.GONE);
+        screen.addView(pageNavigation, margins(0, dp(6), 0, 0));
+
+        pageScroll.setOnTouchListener((view, event) -> {
+            if (!singlePageMode) return false;
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                gestureDownX = event.getX();
+                gestureDownY = event.getY();
+                return false;
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                float dx = event.getX() - gestureDownX;
+                float dy = event.getY() - gestureDownY;
+                if (Math.abs(dx) > dp(64) && Math.abs(dx) > Math.abs(dy) * 1.25f) {
+                    navigateToPage(currentPageIndex + (dx < 0 ? 1 : -1));
+                    return true;
+                }
+            }
+            return false;
+        });
+
         body.addView(screen, new LinearLayout.LayoutParams(-1, -1));
 
         int targetWidthDp = Math.max(260, (int) (getResources().getDisplayMetrics().widthPixels /
@@ -390,7 +461,104 @@ public class MainActivity extends Activity {
         }
 
         pageScroll.setOnScrollChangeListener((View v, int x, int y, int oldX, int oldY) -> schedulePageRefresh());
+        applyPageVisibility();
+        updatePageModeControls();
+        updatePageNavigation();
         pageScroll.post(this::refreshVisiblePages);
+    }
+
+    private void setPageMode(boolean onePage) {
+        if (pageCards == null || pageCards.length == 0 || singlePageMode == onePage) return;
+        singlePageMode = onePage;
+        applyPageVisibility();
+        updatePageModeControls();
+        updatePageNavigation();
+        pageScroll.post(() -> {
+            if (singlePageMode) {
+                pageScroll.scrollTo(0, 0);
+            } else if (currentPageIndex >= 0 && currentPageIndex < pageCards.length) {
+                pageScroll.scrollTo(0, pageCards[currentPageIndex].getTop());
+            }
+            refreshVisiblePages();
+        });
+    }
+
+    private void applyPageVisibility() {
+        if (pageCards == null) return;
+        for (int i = 0; i < pageCards.length; i++) {
+            pageCards[i].setVisibility(!singlePageMode || i == currentPageIndex ? View.VISIBLE : View.GONE);
+        }
+        if (pageScroll != null) pageScroll.scrollTo(0, 0);
+    }
+
+    private void updatePageModeControls() {
+        if (allPagesButton == null || singlePageButton == null) return;
+        allPagesButton.setBackground(round(singlePageMode ? WHITE : INK, singlePageMode ? LINE : INK, 11));
+        allPagesButton.setTextColor(singlePageMode ? INK : WHITE);
+        singlePageButton.setBackground(round(singlePageMode ? INK : WHITE, singlePageMode ? INK : LINE, 11));
+        singlePageButton.setTextColor(singlePageMode ? WHITE : INK);
+    }
+
+    private void updatePageNavigation() {
+        if (pageNavigation == null || pageCounter == null) return;
+        pageNavigation.setVisibility(singlePageMode ? View.VISIBLE : View.GONE);
+        int total = pageCards == null ? 0 : pageCards.length;
+        pageCounter.setText("Page " + (currentPageIndex + 1) + " of " + total + "  ·  Go to page");
+        pageCounter.setContentDescription("Page " + (currentPageIndex + 1) + " of " + total + ". Tap to go to a page.");
+        if (previousPageButton != null) {
+            previousPageButton.setEnabled(currentPageIndex > 0);
+            previousPageButton.setAlpha(currentPageIndex > 0 ? 1f : 0.35f);
+        }
+        if (nextPageButton != null) {
+            nextPageButton.setEnabled(currentPageIndex < total - 1);
+            nextPageButton.setAlpha(currentPageIndex < total - 1 ? 1f : 0.35f);
+        }
+    }
+
+    private void navigateToPage(int pageIndex) {
+        if (pageCards == null || pageIndex < 0 || pageIndex >= pageCards.length) return;
+        currentPageIndex = pageIndex;
+        if (singlePageMode) {
+            applyPageVisibility();
+            updatePageNavigation();
+            pageScroll.post(() -> {
+                pageScroll.scrollTo(0, 0);
+                refreshVisiblePages();
+            });
+        } else {
+            updatePageNavigation();
+            pageScroll.smoothScrollTo(0, pageCards[pageIndex].getTop());
+        }
+    }
+
+    private void showPagePicker() {
+        if (pageCards == null || pageCards.length == 0) return;
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        input.setSingleLine(true);
+        input.setHint("Page 1–" + pageCards.length);
+        input.setText(String.valueOf(currentPageIndex + 1));
+        input.selectAll();
+        int inset = dp(24);
+        LinearLayout wrap = column();
+        wrap.setPadding(inset, dp(8), inset, 0);
+        wrap.addView(input, new LinearLayout.LayoutParams(-1, dp(50)));
+        new AlertDialog.Builder(this)
+                .setTitle("Go to page")
+                .setView(wrap)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Go", (dialog, which) -> {
+                    String value = input.getText().toString().trim();
+                    if (value.isEmpty()) return;
+                    try {
+                        int page = Integer.parseInt(value);
+                        if (page >= 1 && page <= pageCards.length) navigateToPage(page - 1);
+                        else Toast.makeText(this, "Enter a page from 1 to " + pageCards.length, Toast.LENGTH_SHORT).show();
+                    } catch (NumberFormatException ignored) {
+                        Toast.makeText(this, "Enter a valid page number.", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .show();
     }
 
     private String currentDocumentName = "Document";
@@ -407,14 +575,33 @@ public class MainActivity extends Activity {
         int scrollY = pageScroll.getScrollY();
         int viewport = pageScroll.getHeight();
         if (viewport <= 0) return;
-        int low = scrollY - viewport;
-        int high = scrollY + viewport * 2;
         Set<Integer> wanted = new HashSet<>();
-        for (int i = 0; i < pageCards.length; i++) {
-            View card = pageCards[i];
-            int top = card.getTop();
-            int bottom = card.getBottom();
-            if (bottom >= low && top <= high) wanted.add(i);
+        if (singlePageMode) {
+            if (currentPageIndex >= 0 && currentPageIndex < pageCards.length) wanted.add(currentPageIndex);
+        } else {
+            int low = scrollY - viewport;
+            int high = scrollY + viewport * 2;
+            int center = scrollY + viewport / 2;
+            int closestPage = currentPageIndex;
+            int closestDistance = Integer.MAX_VALUE;
+            for (int i = 0; i < pageCards.length; i++) {
+                View card = pageCards[i];
+                if (card.getVisibility() != View.VISIBLE) continue;
+                int top = card.getTop();
+                int bottom = card.getBottom();
+                if (bottom >= low && top <= high) wanted.add(i);
+                int distance = Math.abs((top + bottom) / 2 - center);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestPage = i;
+                }
+            }
+            if (!pageCards[closestPage].isShown()) {
+                // Layout may not have completed yet; retain the last known page.
+            } else {
+                currentPageIndex = closestPage;
+                updatePageNavigation();
+            }
         }
         wantedPages.clear();
         wantedPages.addAll(wanted);
