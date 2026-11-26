@@ -1,0 +1,65 @@
+{
+  "name": "paperly-windows",
+  "version": "1.0.0",
+  "description": "Paperly — a focused PDF viewer and image-to-PDF creator for Windows.",
+  "author": "Paperly",
+  "license": "UNLICENSED",
+  "main": "main.cjs",
+  "scripts": {
+    "build:renderer": "node build-renderer.cjs",
+    "dist:win": "npm run build:renderer && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "svg-to-ico": "2.0.0"
+  },
+  "dependencies": {
+    "pdfjs-dist": "4.10.38",
+    "jspdf": "2.5.2"
+  },
+  "build": {
+    "appId": "com.paperly.desktop",
+    "productName": "Paperly",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Paperly-${version}-Setup.${ext}",
+      "icon": "assets/paperly.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Paperly",
+      "uninstallDisplayName": "Paperly"
+    },
+    "fileAssociations": [
+      {
+        "ext": "pdf",
+        "name": "PDF document",
+        "description": "Open PDF documents with Paperly",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

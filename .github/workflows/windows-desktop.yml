@@ -1,0 +1,66 @@
+name: Build Paperly for Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - 'index.html'
+      - 'icons/**'
+      - '.github/workflows/windows-desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      - name: Build Windows installer
+        working-directory: desktop
+        run: npm run dist:win
+
+      - name: Verify installer output
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem desktop/release/Paperly-*-Setup.exe | Select-Object -First 1
+          if (-not $installer) { throw "Paperly Windows installer was not created." }
+          if ($installer.Length -lt 10000000) { throw "Installer is unexpectedly small ($($installer.Length) bytes)." }
+          Write-Host "Created $($installer.FullName) ($($installer.Length) bytes)"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paperly-Windows-Installer
+          path: desktop/release/Paperly-*-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish Windows installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: paperly-windows-${{ github.run_number }}
+          name: Paperly for Windows v1.0.0 (build ${{ github.run_number }})
+          body: |
+            Paperly for Windows.
+
+            A focused desktop PDF viewer and image-to-PDF creator.
+            PDF.js and jsPDF are included in the installer. Documents are processed locally on your PC.
+            No API tokens or cloud processing are required.
+          files: desktop/release/Paperly-*-Setup.exe
+          make_latest: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
