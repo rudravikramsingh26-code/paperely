@@ -2,6 +2,7 @@ package com.paperly.app;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.ClipData;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -15,6 +16,7 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.pdf.PdfDocument;
 import android.graphics.pdf.PdfRenderer;
+import androidx.core.content.FileProvider;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -78,6 +80,9 @@ public class MainActivity extends Activity {
     private EditText fileNameInput;
     private TextView createStatus;
     private File pendingPdfFile;
+    private Uri currentDocumentUri;
+    private File currentPreviewFile;
+    private Button savePreviewButton;
     private Runnable refreshRunnable;
 
     @Override
@@ -187,17 +192,37 @@ public class MainActivity extends Activity {
         startActivityForResult(intent, REQ_OPEN_PDF);
     }
 
+    private interface PdfDescriptorProvider {
+        ParcelFileDescriptor open() throws Exception;
+    }
+
     private void openPdf(Uri uri) {
+        currentDocumentUri = uri;
+        currentPreviewFile = null;
+        currentDocumentName = displayName(uri);
+        openPdfSource(() -> getContentResolver().openFileDescriptor(uri, "r"), currentDocumentName);
+    }
+
+    private void openGeneratedPdfPreview(File file, String name) {
+        currentDocumentUri = null;
+        currentPreviewFile = file;
+        pendingPdfFile = file;
+        currentDocumentName = name + ".pdf";
+        openPdfSource(() -> ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY),
+                currentDocumentName);
+    }
+
+    private void openPdfSource(PdfDescriptorProvider source, String name) {
         final int token = ++documentToken;
         requestedPages.clear();
         renderedPages.clear();
         wantedPages.clear();
-        showLoadingDocument(displayName(uri));
+        showLoadingDocument(name);
 
         pdfExecutor.execute(() -> {
             try {
                 closePdfOnWorker();
-                ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(uri, "r");
+                ParcelFileDescriptor descriptor = source.open();
                 if (descriptor == null) throw new IllegalStateException("Could not open this file.");
                 PdfRenderer renderer = new PdfRenderer(descriptor);
                 int count = renderer.getPageCount();
@@ -275,6 +300,23 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams stackLp = new LinearLayout.LayoutParams(0, -2, 1);
         stackLp.leftMargin = dp(12);
         top.addView(titleStack, stackLp);
+
+        Button share = button("Share", false);
+        share.setTextSize(12);
+        share.setOnClickListener(v -> shareCurrentPdf());
+        LinearLayout.LayoutParams shareLp = new LinearLayout.LayoutParams(-2, dp(42));
+        shareLp.leftMargin = dp(5);
+        top.addView(share, shareLp);
+
+        savePreviewButton = null;
+        if (currentPreviewFile != null && currentPreviewFile.exists()) {
+            savePreviewButton = button("Save", true);
+            savePreviewButton.setTextSize(12);
+            savePreviewButton.setOnClickListener(v -> startSavePendingPdf());
+            LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(-2, dp(42));
+            saveLp.leftMargin = dp(5);
+            top.addView(savePreviewButton, saveLp);
+        }
         screen.addView(top, margins(0, 0, 0, dp(12)));
 
         pageScroll = new ScrollView(this);
@@ -582,12 +624,7 @@ public class MainActivity extends Activity {
                 document.close();
                 runOnUiThread(() -> {
                     pendingPdfFile = output;
-                    createStatus.setText("PDF ready. Choose where to save it.");
-                    Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                    save.addCategory(Intent.CATEGORY_OPENABLE);
-                    save.setType("application/pdf");
-                    save.putExtra(Intent.EXTRA_TITLE, safeName + ".pdf");
-                    startActivityForResult(save, REQ_SAVE_PDF);
+                    openGeneratedPdfPreview(output, safeName);
                 });
             } catch (Exception e) {
                 try { document.close(); } catch (Exception ignored) { }
@@ -620,6 +657,45 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void startSavePendingPdf() {
+        if (pendingPdfFile == null || !pendingPdfFile.exists()) {
+            Toast.makeText(this, "Create a PDF first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        save.addCategory(Intent.CATEGORY_OPENABLE);
+        save.setType("application/pdf");
+        save.putExtra(Intent.EXTRA_TITLE, currentDocumentName);
+        startActivityForResult(save, REQ_SAVE_PDF);
+    }
+
+    private void shareCurrentPdf() {
+        Uri shareUri = currentDocumentUri;
+        if (currentPreviewFile != null && currentPreviewFile.exists()) {
+            try {
+                shareUri = FileProvider.getUriForFile(this,
+                        getPackageName() + ".fileprovider", currentPreviewFile);
+            } catch (Exception e) {
+                Toast.makeText(this, "Could not prepare this PDF to share.", Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+        if (shareUri == null) {
+            Toast.makeText(this, "No PDF is available to share.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("application/pdf");
+        send.putExtra(Intent.EXTRA_STREAM, shareUri);
+        send.setClipData(ClipData.newUri(getContentResolver(), "Paperly PDF", shareUri));
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(Intent.createChooser(send, "Share PDF"));
+        } catch (Exception e) {
+            Toast.makeText(this, "No compatible app was found to share this PDF.", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void savePendingPdf(Uri destination) {
         if (pendingPdfFile == null || destination == null) return;
         File source = pendingPdfFile;
@@ -634,7 +710,9 @@ public class MainActivity extends Activity {
                 source.delete();
                 pendingPdfFile = null;
                 runOnUiThread(() -> {
-                    if (createStatus != null) createStatus.setText("Saved successfully.");
+                    currentDocumentUri = destination;
+                    currentPreviewFile = null;
+                    if (savePreviewButton != null) savePreviewButton.setVisibility(View.GONE);
                     Toast.makeText(this, "PDF saved.", Toast.LENGTH_LONG).show();
                 });
             } catch (Exception e) {
