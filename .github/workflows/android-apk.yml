@@ -44,6 +44,14 @@ jobs:
           gradle -p android --no-daemon assembleDebug
           cp android/app/build/outputs/apk/debug/app-debug.apk Paperly.apk
 
+      - name: Upload installable APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paperly-Android-APK
+          path: Paperly.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish APK download
         uses: softprops/action-gh-release@v2
         with:
