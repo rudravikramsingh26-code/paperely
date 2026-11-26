@@ -94,6 +94,32 @@ public class MainActivity extends Activity {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         buildShell();
         showHome();
+        handleIncomingIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null) return;
+        Uri incoming = null;
+        String action = intent.getAction();
+        if (Intent.ACTION_VIEW.equals(action)) {
+            incoming = intent.getData();
+        } else if (Intent.ACTION_SEND.equals(action)) {
+            Object stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (stream instanceof Uri) incoming = (Uri) stream;
+        }
+        if (incoming != null) {
+            final Uri pdfUri = incoming;
+            rememberImagePermission(pdfUri);
+            currentDocumentName = displayName(pdfUri);
+            openPdf(pdfUri);
+        }
     }
 
     private void buildShell() {
