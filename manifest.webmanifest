@@ -1,13 +1,13 @@
 {
-  "name": "Paperly — PDF Reader",
+  "name": "Paperly — PDF Viewer & Creator",
   "short_name": "Paperly",
-  "description": "A free, private PDF reader with offline support.",
+  "description": "A simple, private PDF viewer and image-to-PDF creator.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f5f6f8",
-  "theme_color": "#6658e8",
+  "background_color": "#f7f7f5",
+  "theme_color": "#f7f7f5",
   "icons": [
     { "src": "./icons/paperly.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
