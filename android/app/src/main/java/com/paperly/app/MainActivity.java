@@ -8,6 +8,8 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
@@ -25,6 +27,7 @@ import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -87,8 +90,9 @@ public class MainActivity extends Activity {
     private Button previewSaveButton;
     private View overviewScreen;
     private FrameLayout previewArea;
-    private ImageView previewImage;
+    private ZoomableImageView previewImage;
     private TextView previewCounter;
+    private TextView previewZoomLabel;
     private Bitmap previewBitmap;
     private int previewRequestToken = 0;
     private int currentPageIndex = 0;
@@ -485,10 +489,10 @@ public class MainActivity extends Activity {
         previewArea.setBackground(round(Color.rgb(237, 237, 233), LINE, 16));
         previewArea.setClipToPadding(true);
 
-        previewImage = new ImageView(this);
-        previewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        previewImage.setAdjustViewBounds(false);
+        previewImage = new ZoomableImageView(this);
         previewImage.setBackgroundColor(WHITE);
+        previewImage.setPageTurnListener(delta -> navigatePreviewPage(currentPageIndex + delta));
+        previewImage.setOnZoomChangedListener(this::updatePreviewZoomLabel);
         FrameLayout.LayoutParams imageLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -496,35 +500,35 @@ public class MainActivity extends Activity {
         imageLp.setMargins(dp(12), dp(12), dp(12), dp(12));
         previewArea.addView(previewImage, imageLp);
 
-        previewArea.setOnTouchListener((view, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    gestureDownX = event.getX();
-                    gestureDownY = event.getY();
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    float dx = event.getX() - gestureDownX;
-                    float dy = event.getY() - gestureDownY;
-                    if (Math.abs(dx) > dp(48) && Math.abs(dx) > Math.abs(dy) * 1.15f) {
-                        // Natural page turn: swipe left for next, right for previous.
-                        navigatePreviewPage(currentPageIndex + (dx < 0 ? 1 : -1));
-                    } else if (Math.abs(dx) < dp(14) && Math.abs(dy) < dp(14)) {
-                        // Edge taps are a quiet alternative to swiping.
-                        if (event.getX() < view.getWidth() * 0.18f) {
-                            navigatePreviewPage(currentPageIndex - 1);
-                        } else if (event.getX() > view.getWidth() * 0.82f) {
-                            navigatePreviewPage(currentPageIndex + 1);
-                        }
-                    }
-                    return true;
-                case MotionEvent.ACTION_CANCEL:
-                    return true;
-                default:
-                    return true;
-            }
-        });
-
         screen.addView(previewArea, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout zoomControls = new LinearLayout(this);
+        zoomControls.setGravity(Gravity.CENTER);
+        zoomControls.setPadding(0, dp(8), 0, dp(2));
+        Button zoomOut = button("−", false);
+        zoomOut.setTextSize(20);
+        zoomOut.setOnClickListener(v -> {
+            if (previewImage != null) previewImage.zoomBy(0.8f);
+        });
+        previewZoomLabel = text("100%", 12, INK, true);
+        previewZoomLabel.setGravity(Gravity.CENTER);
+        previewZoomLabel.setPadding(dp(18), dp(9), dp(18), dp(9));
+        previewZoomLabel.setBackground(round(WHITE, LINE, 12));
+        previewZoomLabel.setOnClickListener(v -> {
+            if (previewImage != null) previewImage.resetZoom();
+        });
+        Button zoomIn = button("+", false);
+        zoomIn.setTextSize(20);
+        zoomIn.setOnClickListener(v -> {
+            if (previewImage != null) previewImage.zoomBy(1.25f);
+        });
+        LinearLayout.LayoutParams zoomButtonLp = new LinearLayout.LayoutParams(dp(48), dp(42));
+        zoomControls.addView(zoomOut, zoomButtonLp);
+        LinearLayout.LayoutParams zoomLabelLp = new LinearLayout.LayoutParams(dp(84), dp(42));
+        zoomLabelLp.setMargins(dp(10), 0, dp(10), 0);
+        zoomControls.addView(previewZoomLabel, zoomLabelLp);
+        zoomControls.addView(zoomIn, zoomButtonLp);
+        screen.addView(zoomControls);
 
         previewCounter = text("", 13, INK, true);
         previewCounter.setGravity(Gravity.CENTER);
@@ -553,6 +557,7 @@ public class MainActivity extends Activity {
         previewArea = null;
         previewImage = null;
         previewCounter = null;
+        previewZoomLabel = null;
         body.removeAllViews();
         body.addView(overviewScreen, new LinearLayout.LayoutParams(-1, -1));
         if (pageScroll != null) {
@@ -567,12 +572,19 @@ public class MainActivity extends Activity {
         if (!isPreviewOpen || pageCards == null || pageIndex < 0 || pageIndex >= pageCards.length) return;
         currentPageIndex = pageIndex;
         updatePreviewCounter();
+        updatePreviewZoomLabel(1f);
         renderPreviewPage(pageIndex);
     }
 
     private void updatePreviewCounter() {
         if (previewCounter != null && pageCards != null) {
             previewCounter.setText((currentPageIndex + 1) + " of " + pageCards.length);
+        }
+    }
+
+    private void updatePreviewZoomLabel(float zoom) {
+        if (previewZoomLabel != null) {
+            previewZoomLabel.setText(Math.round(zoom * 100f) + "%");
         }
     }
 
@@ -1046,6 +1058,197 @@ public class MainActivity extends Activity {
         try { if (pdfDescriptor != null) pdfDescriptor.close(); } catch (Exception ignored) { }
         pdfRenderer = null;
         pdfDescriptor = null;
+    }
+
+    private class ZoomableImageView extends ImageView {
+        private final Matrix imageMatrix = new Matrix();
+        private final RectF mappedBounds = new RectF();
+        private final ScaleGestureDetector scaleDetector;
+        private Bitmap imageBitmap;
+        private float userScale = 1f;
+        private float downX;
+        private float downY;
+        private float lastX;
+        private float lastY;
+        private boolean moved;
+        private boolean scalingGesture;
+        private PageTurnListener pageTurnListener;
+        private ZoomChangedListener zoomChangedListener;
+
+        ZoomableImageView(android.content.Context context) {
+            super(context);
+            setScaleType(ImageView.ScaleType.MATRIX);
+            scaleDetector = new ScaleGestureDetector(context,
+                    new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                        @Override
+                        public boolean onScaleBegin(ScaleGestureDetector detector) {
+                            scalingGesture = true;
+                            moved = true;
+                            return true;
+                        }
+
+                        @Override
+                        public boolean onScale(ScaleGestureDetector detector) {
+                            applyZoom(detector.getScaleFactor(),
+                                    detector.getFocusX(), detector.getFocusY());
+                            return true;
+                        }
+                    });
+        }
+
+        void setPageTurnListener(PageTurnListener listener) {
+            pageTurnListener = listener;
+        }
+
+        void setOnZoomChangedListener(ZoomChangedListener listener) {
+            zoomChangedListener = listener;
+        }
+
+        @Override
+        public void setImageBitmap(Bitmap bitmap) {
+            imageBitmap = bitmap;
+            super.setImageBitmap(bitmap);
+            fitImage();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            fitImage();
+        }
+
+        private void fitImage() {
+            if (imageBitmap == null || getWidth() <= 0 || getHeight() <= 0) return;
+            float fit = Math.min(getWidth() / (float) imageBitmap.getWidth(),
+                    getHeight() / (float) imageBitmap.getHeight());
+            imageMatrix.reset();
+            imageMatrix.setScale(fit, fit);
+            imageMatrix.postTranslate(
+                    (getWidth() - imageBitmap.getWidth() * fit) / 2f,
+                    (getHeight() - imageBitmap.getHeight() * fit) / 2f);
+            userScale = 1f;
+            setImageMatrix(imageMatrix);
+            notifyZoom();
+        }
+
+        void zoomBy(float factor) {
+            if (imageBitmap == null || getWidth() <= 0 || getHeight() <= 0) return;
+            applyZoom(factor, getWidth() / 2f, getHeight() / 2f);
+        }
+
+        void resetZoom() {
+            fitImage();
+        }
+
+        private void applyZoom(float factor, float focusX, float focusY) {
+            float next = Math.max(1f, Math.min(5f, userScale * factor));
+            float applied = next / userScale;
+            if (Math.abs(applied - 1f) < 0.001f) return;
+            imageMatrix.postScale(applied, applied, focusX, focusY);
+            userScale = next;
+            constrainImage();
+            setImageMatrix(imageMatrix);
+            notifyZoom();
+        }
+
+        private void constrainImage() {
+            if (imageBitmap == null) return;
+            mappedBounds.set(0, 0, imageBitmap.getWidth(), imageBitmap.getHeight());
+            imageMatrix.mapRect(mappedBounds);
+
+            float dx = 0f;
+            float dy = 0f;
+            if (mappedBounds.width() <= getWidth()) {
+                dx = getWidth() / 2f - mappedBounds.centerX();
+            } else if (mappedBounds.left > 0) {
+                dx = -mappedBounds.left;
+            } else if (mappedBounds.right < getWidth()) {
+                dx = getWidth() - mappedBounds.right;
+            }
+
+            if (mappedBounds.height() <= getHeight()) {
+                dy = getHeight() / 2f - mappedBounds.centerY();
+            } else if (mappedBounds.top > 0) {
+                dy = -mappedBounds.top;
+            } else if (mappedBounds.bottom < getHeight()) {
+                dy = getHeight() - mappedBounds.bottom;
+            }
+
+            imageMatrix.postTranslate(dx, dy);
+        }
+
+        private void notifyZoom() {
+            if (zoomChangedListener != null) zoomChangedListener.onZoomChanged(userScale);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            scaleDetector.onTouchEvent(event);
+
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = lastX = event.getX();
+                    downY = lastY = event.getY();
+                    moved = false;
+                    scalingGesture = false;
+                    return true;
+
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    scalingGesture = true;
+                    moved = true;
+                    return true;
+
+                case MotionEvent.ACTION_MOVE:
+                    if (scaleDetector.isInProgress() || event.getPointerCount() > 1) {
+                        scalingGesture = true;
+                        moved = true;
+                        return true;
+                    }
+                    if (userScale > 1.01f) {
+                        float x = event.getX();
+                        float y = event.getY();
+                        imageMatrix.postTranslate(x - lastX, y - lastY);
+                        constrainImage();
+                        setImageMatrix(imageMatrix);
+                        lastX = x;
+                        lastY = y;
+                        moved = true;
+                    } else if (Math.abs(event.getX() - downX) > dp(8)
+                            || Math.abs(event.getY() - downY) > dp(8)) {
+                        moved = true;
+                    }
+                    return true;
+
+                case MotionEvent.ACTION_UP:
+                    float dx = event.getX() - downX;
+                    float dy = event.getY() - downY;
+                    if (!scalingGesture && userScale <= 1.01f && pageTurnListener != null) {
+                        if (Math.abs(dx) > dp(48) && Math.abs(dx) > Math.abs(dy) * 1.15f) {
+                            pageTurnListener.onPageTurn(dx < 0 ? 1 : -1);
+                        } else if (!moved && Math.abs(dx) < dp(14) && Math.abs(dy) < dp(14)) {
+                            if (event.getX() < getWidth() * 0.18f) pageTurnListener.onPageTurn(-1);
+                            else if (event.getX() > getWidth() * 0.82f) pageTurnListener.onPageTurn(1);
+                        }
+                    }
+                    return true;
+
+                case MotionEvent.ACTION_CANCEL:
+                    moved = false;
+                    scalingGesture = false;
+                    return true;
+
+                default:
+                    return true;
+            }
+        }
+    }
+
+    private interface PageTurnListener {
+        void onPageTurn(int delta);
+    }
+
+    private interface ZoomChangedListener {
+        void onZoomChanged(float zoom);
     }
 
     private LinearLayout column() {
