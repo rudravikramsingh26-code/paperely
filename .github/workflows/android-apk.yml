@@ -26,11 +26,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android platform
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -50,8 +52,8 @@ jobs:
           body: |
             Paperly for Android.
 
-            A focused, offline-first PDF viewer and image-to-PDF creator.
-            Install the attached APK on your Android device.
+            A focused PDF viewer and image-to-PDF creator.
+            Documents are handled locally on your device.
           files: Paperly.apk
           make_latest: true
         env:
