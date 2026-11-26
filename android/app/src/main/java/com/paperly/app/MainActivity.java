@@ -92,7 +92,6 @@ public class MainActivity extends Activity {
     private FrameLayout previewArea;
     private ZoomableImageView previewImage;
     private TextView previewCounter;
-    private TextView previewZoomLabel;
     private Bitmap previewBitmap;
     private int previewRequestToken = 0;
     private int currentPageIndex = 0;
@@ -123,9 +122,17 @@ public class MainActivity extends Activity {
 
     private void handleIncomingIntent(Intent intent) {
         if (intent == null) return;
-        Uri incoming = null;
         String action = intent.getAction();
+        String mime = intent.getType();
 
+        if (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            if (mime != null && mime.startsWith("image/")) {
+                openSharedImages(intent, action);
+                return;
+            }
+        }
+
+        Uri incoming = null;
         if (Intent.ACTION_VIEW.equals(action)) {
             incoming = intent.getData();
         } else if (Intent.ACTION_SEND.equals(action)) {
@@ -145,6 +152,43 @@ public class MainActivity extends Activity {
             rememberImagePermission(incoming);
             openPdf(incoming);
         }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void openSharedImages(Intent intent, String action) {
+        ArrayList<Uri> shared = new ArrayList<>();
+        if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                ArrayList<Uri> uris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri.class);
+                if (uris != null) shared.addAll(uris);
+            } else {
+                ArrayList<Uri> uris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+                if (uris != null) shared.addAll(uris);
+            }
+        } else {
+            Uri uri;
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                uri = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
+            } else {
+                Object value = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                uri = value instanceof Uri ? (Uri) value : null;
+            }
+            if (uri != null) shared.add(uri);
+        }
+
+        if (shared.isEmpty() && intent.getClipData() != null) {
+            for (int i = 0; i < intent.getClipData().getItemCount(); i++) {
+                Uri uri = intent.getClipData().getItemAt(i).getUri();
+                if (uri != null) shared.add(uri);
+            }
+        }
+
+        selectedImages.clear();
+        for (Uri uri : shared) {
+            rememberImagePermission(uri);
+            if (!selectedImages.contains(uri)) selectedImages.add(uri);
+        }
+        if (!selectedImages.isEmpty()) showCreate();
     }
 
     private void buildShell() {
@@ -492,7 +536,6 @@ public class MainActivity extends Activity {
         previewImage = new ZoomableImageView(this);
         previewImage.setBackgroundColor(WHITE);
         previewImage.setPageTurnListener(delta -> navigatePreviewPage(currentPageIndex + delta));
-        previewImage.setOnZoomChangedListener(this::updatePreviewZoomLabel);
         FrameLayout.LayoutParams imageLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -502,33 +545,9 @@ public class MainActivity extends Activity {
 
         screen.addView(previewArea, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        LinearLayout zoomControls = new LinearLayout(this);
-        zoomControls.setGravity(Gravity.CENTER);
-        zoomControls.setPadding(0, dp(8), 0, dp(2));
-        Button zoomOut = button("−", false);
-        zoomOut.setTextSize(20);
-        zoomOut.setOnClickListener(v -> {
-            if (previewImage != null) previewImage.zoomBy(0.8f);
-        });
-        previewZoomLabel = text("100%", 12, INK, true);
-        previewZoomLabel.setGravity(Gravity.CENTER);
-        previewZoomLabel.setPadding(dp(18), dp(9), dp(18), dp(9));
-        previewZoomLabel.setBackground(round(WHITE, LINE, 12));
-        previewZoomLabel.setOnClickListener(v -> {
-            if (previewImage != null) previewImage.resetZoom();
-        });
-        Button zoomIn = button("+", false);
-        zoomIn.setTextSize(20);
-        zoomIn.setOnClickListener(v -> {
-            if (previewImage != null) previewImage.zoomBy(1.25f);
-        });
-        LinearLayout.LayoutParams zoomButtonLp = new LinearLayout.LayoutParams(dp(48), dp(42));
-        zoomControls.addView(zoomOut, zoomButtonLp);
-        LinearLayout.LayoutParams zoomLabelLp = new LinearLayout.LayoutParams(dp(84), dp(42));
-        zoomLabelLp.setMargins(dp(10), 0, dp(10), 0);
-        zoomControls.addView(previewZoomLabel, zoomLabelLp);
-        zoomControls.addView(zoomIn, zoomButtonLp);
-        screen.addView(zoomControls);
+        TextView zoomHint = text("Pinch to zoom · Drag to inspect", 11, MUTED, false);
+        zoomHint.setGravity(Gravity.CENTER);
+        screen.addView(zoomHint, margins(0, dp(8), 0, dp(2)));
 
         previewCounter = text("", 13, INK, true);
         previewCounter.setGravity(Gravity.CENTER);
@@ -557,7 +576,6 @@ public class MainActivity extends Activity {
         previewArea = null;
         previewImage = null;
         previewCounter = null;
-        previewZoomLabel = null;
         body.removeAllViews();
         body.addView(overviewScreen, new LinearLayout.LayoutParams(-1, -1));
         if (pageScroll != null) {
@@ -579,12 +597,6 @@ public class MainActivity extends Activity {
     private void updatePreviewCounter() {
         if (previewCounter != null && pageCards != null) {
             previewCounter.setText((currentPageIndex + 1) + " of " + pageCards.length);
-        }
-    }
-
-    private void updatePreviewZoomLabel(float zoom) {
-        if (previewZoomLabel != null) {
-            previewZoomLabel.setText(Math.round(zoom * 100f) + "%");
         }
     }
 
@@ -1073,7 +1085,6 @@ public class MainActivity extends Activity {
         private boolean moved;
         private boolean scalingGesture;
         private PageTurnListener pageTurnListener;
-        private ZoomChangedListener zoomChangedListener;
 
         ZoomableImageView(android.content.Context context) {
             super(context);
@@ -1100,10 +1111,6 @@ public class MainActivity extends Activity {
             pageTurnListener = listener;
         }
 
-        void setOnZoomChangedListener(ZoomChangedListener listener) {
-            zoomChangedListener = listener;
-        }
-
         @Override
         public void setImageBitmap(Bitmap bitmap) {
             imageBitmap = bitmap;
@@ -1128,17 +1135,8 @@ public class MainActivity extends Activity {
                     (getHeight() - imageBitmap.getHeight() * fit) / 2f);
             userScale = 1f;
             setImageMatrix(imageMatrix);
-            notifyZoom();
         }
 
-        void zoomBy(float factor) {
-            if (imageBitmap == null || getWidth() <= 0 || getHeight() <= 0) return;
-            applyZoom(factor, getWidth() / 2f, getHeight() / 2f);
-        }
-
-        void resetZoom() {
-            fitImage();
-        }
 
         private void applyZoom(float factor, float focusX, float focusY) {
             float next = Math.max(1f, Math.min(5f, userScale * factor));
@@ -1148,7 +1146,6 @@ public class MainActivity extends Activity {
             userScale = next;
             constrainImage();
             setImageMatrix(imageMatrix);
-            notifyZoom();
         }
 
         private void constrainImage() {
@@ -1175,10 +1172,6 @@ public class MainActivity extends Activity {
             }
 
             imageMatrix.postTranslate(dx, dy);
-        }
-
-        private void notifyZoom() {
-            if (zoomChangedListener != null) zoomChangedListener.onZoomChanged(userScale);
         }
 
         @Override
@@ -1225,9 +1218,6 @@ public class MainActivity extends Activity {
                     if (!scalingGesture && userScale <= 1.01f && pageTurnListener != null) {
                         if (Math.abs(dx) > dp(48) && Math.abs(dx) > Math.abs(dy) * 1.15f) {
                             pageTurnListener.onPageTurn(dx < 0 ? 1 : -1);
-                        } else if (!moved && Math.abs(dx) < dp(14) && Math.abs(dy) < dp(14)) {
-                            if (event.getX() < getWidth() * 0.18f) pageTurnListener.onPageTurn(-1);
-                            else if (event.getX() > getWidth() * 0.82f) pageTurnListener.onPageTurn(1);
                         }
                     }
                     return true;
@@ -1245,10 +1235,6 @@ public class MainActivity extends Activity {
 
     private interface PageTurnListener {
         void onPageTurn(int delta);
-    }
-
-    private interface ZoomChangedListener {
-        void onZoomChanged(float zoom);
     }
 
     private LinearLayout column() {
