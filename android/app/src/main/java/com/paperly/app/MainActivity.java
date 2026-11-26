@@ -1,7 +1,6 @@
 package com.paperly.app;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.ClipData;
 import android.content.res.ColorStateList;
@@ -20,7 +19,6 @@ import android.graphics.pdf.PdfRenderer;
 import androidx.core.content.FileProvider;
 import android.net.Uri;
 import android.os.Bundle;
-import android.text.InputType;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
@@ -85,18 +83,19 @@ public class MainActivity extends Activity {
     private File pendingPdfFile;
     private Uri currentDocumentUri;
     private File currentPreviewFile;
-    private Button savePreviewButton;
-    private Button allPagesButton;
-    private Button singlePageButton;
-    private Button previousPageButton;
-    private Button nextPageButton;
-    private TextView pageCounter;
-    private LinearLayout pageNavigation;
-    private boolean singlePageMode = false;
+    private Button overviewSaveButton;
+    private Button previewSaveButton;
+    private View overviewScreen;
+    private FrameLayout previewArea;
+    private ImageView previewImage;
+    private TextView previewCounter;
+    private Bitmap previewBitmap;
+    private int previewRequestToken = 0;
     private int currentPageIndex = 0;
+    private int overviewScrollY = 0;
+    private boolean isPreviewOpen = false;
     private float gestureDownX;
     private float gestureDownY;
-    private View.OnTouchListener singlePageTouchListener;
     private Runnable refreshRunnable;
 
     @Override
@@ -272,7 +271,9 @@ public class MainActivity extends Activity {
         renderedPages.clear();
         wantedPages.clear();
         currentPageIndex = 0;
-        singlePageMode = false;
+        overviewScrollY = 0;
+        isPreviewOpen = false;
+        previewRequestToken++;
         showLoadingDocument(name);
 
         pdfExecutor.execute(() -> {
@@ -338,14 +339,19 @@ public class MainActivity extends Activity {
         pageHeights = heights;
         pageImages = new ImageView[count];
         pageCards = new View[count];
+        overviewScrollY = 0;
+        isPreviewOpen = false;
 
         LinearLayout screen = column();
         screen.setPadding(dp(16), dp(10), dp(16), dp(8));
+
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
+
         Button back = button("←", false);
         back.setOnClickListener(v -> showHome());
         top.addView(back);
+
         LinearLayout titleStack = column();
         TextView name = text(getCurrentDocumentName(), 14, INK, true);
         name.setSingleLine(true);
@@ -364,30 +370,20 @@ public class MainActivity extends Activity {
         shareLp.leftMargin = dp(5);
         top.addView(share, shareLp);
 
-        savePreviewButton = null;
+        overviewSaveButton = null;
         if (currentPreviewFile != null && currentPreviewFile.exists()) {
-            savePreviewButton = button("Save", true);
-            savePreviewButton.setTextSize(12);
-            savePreviewButton.setOnClickListener(v -> startSavePendingPdf());
+            overviewSaveButton = button("Save", true);
+            overviewSaveButton.setTextSize(12);
+            overviewSaveButton.setOnClickListener(v -> startSavePendingPdf());
             LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(-2, dp(42));
             saveLp.leftMargin = dp(5);
-            top.addView(savePreviewButton, saveLp);
+            top.addView(overviewSaveButton, saveLp);
         }
-        screen.addView(top, margins(0, 0, 0, dp(12)));
+        screen.addView(top, margins(0, 0, 0, dp(8)));
 
-        LinearLayout modeRow = new LinearLayout(this);
-        modeRow.setOrientation(LinearLayout.HORIZONTAL);
-        modeRow.setPadding(dp(4), dp(4), dp(4), dp(4));
-        modeRow.setBackground(round(Color.rgb(238, 238, 234), 0, 14));
-        allPagesButton = button("All pages", true);
-        singlePageButton = button("One page", false);
-        allPagesButton.setTextSize(12);
-        singlePageButton.setTextSize(12);
-        modeRow.addView(allPagesButton, new LinearLayout.LayoutParams(0, dp(40), 1));
-        modeRow.addView(singlePageButton, new LinearLayout.LayoutParams(0, dp(40), 1));
-        allPagesButton.setOnClickListener(v -> setPageMode(false));
-        singlePageButton.setOnClickListener(v -> setPageMode(true));
-        screen.addView(modeRow, margins(0, 0, 0, dp(10)));
+        TextView hint = text("Tap any page to preview it.", 12, MUTED, false);
+        hint.setPadding(dp(4), dp(3), dp(4), dp(8));
+        screen.addView(hint);
 
         pageScroll = new ScrollView(this);
         pageScroll.setFillViewport(false);
@@ -398,49 +394,6 @@ public class MainActivity extends Activity {
         pageScroll.addView(pageStack);
         screen.addView(pageScroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        pageNavigation = new LinearLayout(this);
-        pageNavigation.setGravity(Gravity.CENTER_VERTICAL);
-        pageNavigation.setPadding(dp(4), dp(8), dp(4), dp(2));
-        previousPageButton = button("‹", false);
-        nextPageButton = button("›", false);
-        previousPageButton.setTextSize(24);
-        nextPageButton.setTextSize(24);
-        pageCounter = text("Page 1 of " + count + " · Go to page", 13, INK, true);
-        pageCounter.setGravity(Gravity.CENTER);
-        pageCounter.setPadding(dp(12), dp(10), dp(12), dp(10));
-        pageCounter.setBackground(round(WHITE, LINE, 12));
-        pageCounter.setOnClickListener(v -> showPagePicker());
-        LinearLayout.LayoutParams counterLp = new LinearLayout.LayoutParams(0, dp(44), 1);
-        counterLp.leftMargin = dp(12);
-        counterLp.rightMargin = dp(12);
-        pageNavigation.addView(previousPageButton, new LinearLayout.LayoutParams(dp(54), dp(44)));
-        pageNavigation.addView(pageCounter, counterLp);
-        pageNavigation.addView(nextPageButton, new LinearLayout.LayoutParams(dp(54), dp(44)));
-        previousPageButton.setOnClickListener(v -> navigateToPage(currentPageIndex - 1));
-        nextPageButton.setOnClickListener(v -> navigateToPage(currentPageIndex + 1));
-        pageNavigation.setVisibility(View.GONE);
-        screen.addView(pageNavigation, margins(0, dp(6), 0, 0));
-
-        pageScroll.setOnTouchListener((view, event) -> {
-            if (!singlePageMode) return false;
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                gestureDownX = event.getX();
-                gestureDownY = event.getY();
-                return false;
-            }
-            if (event.getAction() == MotionEvent.ACTION_UP) {
-                float dx = event.getX() - gestureDownX;
-                float dy = event.getY() - gestureDownY;
-                if (Math.abs(dx) > dp(64) && Math.abs(dx) > Math.abs(dy) * 1.25f) {
-                    navigateToPage(currentPageIndex + (dx < 0 ? 1 : -1));
-                    return true;
-                }
-            }
-            return false;
-        });
-
-        body.addView(screen, new LinearLayout.LayoutParams(-1, -1));
-
         int targetWidthDp = Math.max(260, (int) (getResources().getDisplayMetrics().widthPixels /
                 getResources().getDisplayMetrics().density) - 46);
         for (int i = 0; i < count; i++) {
@@ -450,53 +403,234 @@ public class MainActivity extends Activity {
             card.setBackground(panelBackground());
             card.setClickable(true);
             card.setFocusable(true);
-            card.setOnClickListener(v -> {
-                if (!singlePageMode) {
-                    currentPageIndex = pageIndex;
-                    setPageMode(true);
-                }
-            });
+            card.setOnClickListener(v -> openPagePreview(pageIndex));
+
             ImageView image = new ImageView(this);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setBackgroundColor(WHITE);
             int h = Math.max(120, targetWidthDp * heights[i] / Math.max(1, widths[i]));
             card.addView(image, new LinearLayout.LayoutParams(-1, dp(h)));
+
             TextView label = text("PAGE " + (i + 1), 10, MUTED, true);
             label.setGravity(Gravity.CENTER);
             label.setLetterSpacing(0.12f);
             card.addView(label, margins(0, dp(7), 0, 0));
+
             pageStack.addView(card, margins(0, 0, 0, dp(14)));
             pageImages[i] = image;
             pageCards[i] = card;
-            image.setOnTouchListener((view, event) -> {
-                if (!singlePageMode) return false;
-                return handleSinglePageTouch(view, event, pageIndex);
-            });
         }
 
-        pageScroll.setOnScrollChangeListener((View v, int x, int y, int oldX, int oldY) -> schedulePageRefresh());
-        applyPageVisibility();
-        updatePageModeControls();
-        updatePageNavigation();
+        pageScroll.setOnScrollChangeListener((View v, int x, int y, int oldX, int oldY) -> {
+            overviewScrollY = y;
+            schedulePageRefresh();
+        });
+
+        overviewScreen = screen;
+        body.addView(screen, new LinearLayout.LayoutParams(-1, -1));
         pageScroll.post(this::refreshVisiblePages);
     }
 
-    private void setPageMode(boolean onePage) {
-        if (pageCards == null || pageCards.length == 0 || singlePageMode == onePage) return;
-        singlePageMode = onePage;
-        applyPageVisibility();
-        updatePageModeControls();
-        updatePageNavigation();
-        pageScroll.post(() -> {
-            if (singlePageMode) {
-                pageScroll.scrollTo(0, 0);
-            } else if (currentPageIndex >= 0 && currentPageIndex < pageCards.length) {
-                pageScroll.scrollTo(0, pageCards[currentPageIndex].getTop());
+    private void openPagePreview(int pageIndex) {
+        if (pageCards == null || pageIndex < 0 || pageIndex >= pageCards.length) return;
+        currentPageIndex = pageIndex;
+        if (pageScroll != null) overviewScrollY = pageScroll.getScrollY();
+        isPreviewOpen = true;
+        previewRequestToken++;
+
+        body.removeAllViews();
+
+        LinearLayout screen = column();
+        screen.setPadding(dp(16), dp(10), dp(16), dp(10));
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button back = button("← Pages", false);
+        back.setTextSize(12);
+        back.setOnClickListener(v -> closePagePreview());
+        top.addView(back);
+
+        LinearLayout titleStack = column();
+        TextView name = text(getCurrentDocumentName(), 13, INK, true);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        TextView mode = text("PAGE PREVIEW", 9, MUTED, true);
+        mode.setLetterSpacing(0.12f);
+        titleStack.addView(name);
+        titleStack.addView(mode);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1);
+        titleLp.leftMargin = dp(10);
+        top.addView(titleStack, titleLp);
+
+        Button share = button("Share", false);
+        share.setTextSize(12);
+        share.setOnClickListener(v -> shareCurrentPdf());
+        LinearLayout.LayoutParams shareLp = new LinearLayout.LayoutParams(-2, dp(42));
+        shareLp.leftMargin = dp(5);
+        top.addView(share, shareLp);
+
+        previewSaveButton = null;
+        if (currentPreviewFile != null && currentPreviewFile.exists()) {
+            previewSaveButton = button("Save", true);
+            previewSaveButton.setTextSize(12);
+            previewSaveButton.setOnClickListener(v -> startSavePendingPdf());
+            LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(-2, dp(42));
+            saveLp.leftMargin = dp(5);
+            top.addView(previewSaveButton, saveLp);
+        }
+        screen.addView(top, margins(0, 0, 0, dp(12)));
+
+        previewArea = new FrameLayout(this);
+        previewArea.setBackground(round(Color.rgb(237, 237, 233), LINE, 16));
+        previewArea.setClipToPadding(true);
+
+        previewImage = new ImageView(this);
+        previewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        previewImage.setAdjustViewBounds(false);
+        previewImage.setBackgroundColor(WHITE);
+        FrameLayout.LayoutParams imageLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER);
+        imageLp.setMargins(dp(12), dp(12), dp(12), dp(12));
+        previewArea.addView(previewImage, imageLp);
+
+        previewArea.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    gestureDownX = event.getX();
+                    gestureDownY = event.getY();
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    float dx = event.getX() - gestureDownX;
+                    float dy = event.getY() - gestureDownY;
+                    if (Math.abs(dx) > dp(48) && Math.abs(dx) > Math.abs(dy) * 1.15f) {
+                        // Natural page turn: swipe left for next, right for previous.
+                        navigatePreviewPage(currentPageIndex + (dx < 0 ? 1 : -1));
+                    } else if (Math.abs(dx) < dp(14) && Math.abs(dy) < dp(14)) {
+                        // Edge taps are a quiet alternative to swiping.
+                        if (event.getX() < view.getWidth() * 0.18f) {
+                            navigatePreviewPage(currentPageIndex - 1);
+                        } else if (event.getX() > view.getWidth() * 0.82f) {
+                            navigatePreviewPage(currentPageIndex + 1);
+                        }
+                    }
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    return true;
+                default:
+                    return true;
             }
-            refreshVisiblePages();
         });
+
+        screen.addView(previewArea, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        previewCounter = text("", 13, INK, true);
+        previewCounter.setGravity(Gravity.CENTER);
+        previewCounter.setPadding(0, dp(12), 0, dp(2));
+        screen.addView(previewCounter);
+
+        TextView swipeHint = text("Swipe left or right to turn pages", 11, MUTED, false);
+        swipeHint.setGravity(Gravity.CENTER);
+        screen.addView(swipeHint, margins(0, dp(2), 0, dp(4)));
+
+        body.addView(screen, new LinearLayout.LayoutParams(-1, -1));
+        updatePreviewCounter();
+
+        previewArea.post(() -> renderPreviewPage(currentPageIndex));
     }
 
+    private void closePagePreview() {
+        if (!isPreviewOpen || overviewScreen == null) return;
+        isPreviewOpen = false;
+        previewRequestToken++;
+        if (previewBitmap != null && !previewBitmap.isRecycled()) {
+            previewBitmap.recycle();
+            previewBitmap = null;
+        }
+        if (previewImage != null) previewImage.setImageDrawable(null);
+        previewArea = null;
+        previewImage = null;
+        previewCounter = null;
+        body.removeAllViews();
+        body.addView(overviewScreen, new LinearLayout.LayoutParams(-1, -1));
+        if (pageScroll != null) {
+            pageScroll.post(() -> {
+                pageScroll.scrollTo(0, overviewScrollY);
+                refreshVisiblePages();
+            });
+        }
+    }
+
+    private void navigatePreviewPage(int pageIndex) {
+        if (!isPreviewOpen || pageCards == null || pageIndex < 0 || pageIndex >= pageCards.length) return;
+        currentPageIndex = pageIndex;
+        updatePreviewCounter();
+        renderPreviewPage(pageIndex);
+    }
+
+    private void updatePreviewCounter() {
+        if (previewCounter != null && pageCards != null) {
+            previewCounter.setText((currentPageIndex + 1) + " of " + pageCards.length);
+        }
+    }
+
+    private void renderPreviewPage(int pageIndex) {
+        if (!isPreviewOpen || previewArea == null || pageIndex < 0 || pageIndex >= pageCards.length) return;
+        final int request = ++previewRequestToken;
+        final int document = documentToken;
+        final int availableWidth = Math.max(1, previewArea.getWidth() - dp(28));
+        final int availableHeight = Math.max(1, previewArea.getHeight() - dp(28));
+        if (availableWidth <= 1 || availableHeight <= 1) {
+            previewArea.post(() -> renderPreviewPage(pageIndex));
+            return;
+        }
+
+        pdfExecutor.execute(() -> {
+            Bitmap bitmap = null;
+            PdfRenderer.Page page = null;
+            try {
+                if (document != documentToken || pdfRenderer == null) return;
+                page = pdfRenderer.openPage(pageIndex);
+                float scale = Math.min(
+                        availableWidth / (float) page.getWidth(),
+                        availableHeight / (float) page.getHeight());
+                scale = Math.min(scale, 2.0f);
+                int width = Math.max(1, Math.round(page.getWidth() * scale));
+                int height = Math.max(1, Math.round(page.getHeight() * scale));
+                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                bitmap.eraseColor(Color.WHITE);
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                page.close();
+                page = null;
+
+                Bitmap result = bitmap;
+                runOnUiThread(() -> {
+                    if (isPreviewOpen && request == previewRequestToken && document == documentToken
+                            && previewImage != null) {
+                        Bitmap old = previewBitmap;
+                        previewBitmap = result;
+                        previewImage.setImageBitmap(result);
+                        if (old != null && old != result && !old.isRecycled()) old.recycle();
+                    } else if (!result.isRecycled()) {
+                        result.recycle();
+                    }
+                });
+            } catch (Exception e) {
+                if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+                runOnUiThread(() -> {
+                    if (isPreviewOpen && request == previewRequestToken) {
+                        Toast.makeText(this, "Could not render this page.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            } finally {
+                if (page != null) {
+                    try { page.close(); } catch (Exception ignored) { }
+                }
+            }
+        });
+    }
     private boolean handleSinglePageTouch(View pageView, MotionEvent event, int pageIndex) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
@@ -524,84 +658,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void applyPageVisibility() {
-        if (pageCards == null) return;
-        for (int i = 0; i < pageCards.length; i++) {
-            pageCards[i].setVisibility(!singlePageMode || i == currentPageIndex ? View.VISIBLE : View.GONE);
-        }
-        if (pageScroll != null) pageScroll.scrollTo(0, 0);
-    }
-
-    private void updatePageModeControls() {
-        if (allPagesButton == null || singlePageButton == null) return;
-        allPagesButton.setBackground(round(singlePageMode ? WHITE : INK, singlePageMode ? LINE : INK, 11));
-        allPagesButton.setTextColor(singlePageMode ? INK : WHITE);
-        singlePageButton.setBackground(round(singlePageMode ? INK : WHITE, singlePageMode ? INK : LINE, 11));
-        singlePageButton.setTextColor(singlePageMode ? WHITE : INK);
-    }
-
-    private void updatePageNavigation() {
-        if (pageNavigation == null || pageCounter == null) return;
-        pageNavigation.setVisibility(singlePageMode ? View.VISIBLE : View.GONE);
-        int total = pageCards == null ? 0 : pageCards.length;
-        pageCounter.setText("Page " + (currentPageIndex + 1) + " of " + total + "  ·  Go to page");
-        pageCounter.setContentDescription("Page " + (currentPageIndex + 1) + " of " + total + ". Tap to go to a page.");
-        if (previousPageButton != null) {
-            previousPageButton.setEnabled(currentPageIndex > 0);
-            previousPageButton.setAlpha(currentPageIndex > 0 ? 1f : 0.35f);
-        }
-        if (nextPageButton != null) {
-            nextPageButton.setEnabled(currentPageIndex < total - 1);
-            nextPageButton.setAlpha(currentPageIndex < total - 1 ? 1f : 0.35f);
-        }
-    }
-
-    private void navigateToPage(int pageIndex) {
-        if (pageCards == null || pageIndex < 0 || pageIndex >= pageCards.length) return;
-        currentPageIndex = pageIndex;
-        if (singlePageMode) {
-            applyPageVisibility();
-            updatePageNavigation();
-            pageScroll.post(() -> {
-                pageScroll.scrollTo(0, 0);
-                refreshVisiblePages();
-            });
-        } else {
-            updatePageNavigation();
-            pageScroll.smoothScrollTo(0, pageCards[pageIndex].getTop());
-        }
-    }
-
-    private void showPagePicker() {
-        if (pageCards == null || pageCards.length == 0) return;
-        EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER);
-        input.setSingleLine(true);
-        input.setHint("Page 1–" + pageCards.length);
-        input.setText(String.valueOf(currentPageIndex + 1));
-        input.selectAll();
-        int inset = dp(24);
-        LinearLayout wrap = column();
-        wrap.setPadding(inset, dp(8), inset, 0);
-        wrap.addView(input, new LinearLayout.LayoutParams(-1, dp(50)));
-        new AlertDialog.Builder(this)
-                .setTitle("Go to page")
-                .setView(wrap)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Go", (dialog, which) -> {
-                    String value = input.getText().toString().trim();
-                    if (value.isEmpty()) return;
-                    try {
-                        int page = Integer.parseInt(value);
-                        if (page >= 1 && page <= pageCards.length) navigateToPage(page - 1);
-                        else Toast.makeText(this, "Enter a page from 1 to " + pageCards.length, Toast.LENGTH_SHORT).show();
-                    } catch (NumberFormatException ignored) {
-                        Toast.makeText(this, "Enter a valid page number.", Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .show();
-    }
-
     private String currentDocumentName = "Document";
     private String getCurrentDocumentName() { return currentDocumentName; }
 
@@ -612,37 +668,19 @@ public class MainActivity extends Activity {
     }
 
     private void refreshVisiblePages() {
-        if (pageScroll == null || pageCards == null || pageImages == null) return;
+        if (pageScroll == null || pageCards == null || pageImages == null || isPreviewOpen) return;
         int scrollY = pageScroll.getScrollY();
         int viewport = pageScroll.getHeight();
         if (viewport <= 0) return;
+
+        int low = scrollY - viewport;
+        int high = scrollY + viewport * 2;
         Set<Integer> wanted = new HashSet<>();
-        if (singlePageMode) {
-            if (currentPageIndex >= 0 && currentPageIndex < pageCards.length) wanted.add(currentPageIndex);
-        } else {
-            int low = scrollY - viewport;
-            int high = scrollY + viewport * 2;
-            int center = scrollY + viewport / 2;
-            int closestPage = currentPageIndex;
-            int closestDistance = Integer.MAX_VALUE;
-            for (int i = 0; i < pageCards.length; i++) {
-                View card = pageCards[i];
-                if (card.getVisibility() != View.VISIBLE) continue;
-                int top = card.getTop();
-                int bottom = card.getBottom();
-                if (bottom >= low && top <= high) wanted.add(i);
-                int distance = Math.abs((top + bottom) / 2 - center);
-                if (distance < closestDistance) {
-                    closestDistance = distance;
-                    closestPage = i;
-                }
-            }
-            if (!pageCards[closestPage].isShown()) {
-                // Layout may not have completed yet; retain the last known page.
-            } else {
-                currentPageIndex = closestPage;
-                updatePageNavigation();
-            }
+        for (int i = 0; i < pageCards.length; i++) {
+            View card = pageCards[i];
+            int top = card.getTop();
+            int bottom = card.getBottom();
+            if (bottom >= low && top <= high) wanted.add(i);
         }
         wantedPages.clear();
         wantedPages.addAll(wanted);
@@ -666,7 +704,6 @@ public class MainActivity extends Activity {
             pdfExecutor.execute(() -> renderPdfPage(index, token));
         }
     }
-
     private void renderPdfPage(int index, int token) {
         Bitmap bitmap = null;
         try {
@@ -982,7 +1019,8 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     currentDocumentUri = destination;
                     currentPreviewFile = null;
-                    if (savePreviewButton != null) savePreviewButton.setVisibility(View.GONE);
+                    if (previewSaveButton != null) previewSaveButton.setVisibility(View.GONE);
+                    if (overviewSaveButton != null) overviewSaveButton.setVisibility(View.GONE);
                     Toast.makeText(this, "PDF saved.", Toast.LENGTH_LONG).show();
                 });
             } catch (Exception e) {
@@ -1081,8 +1119,22 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onBackPressed() {
+        if (isPreviewOpen) {
+            closePagePreview();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override
     protected void onDestroy() {
         documentToken++;
+        previewRequestToken++;
+        if (previewBitmap != null && !previewBitmap.isRecycled()) {
+            previewBitmap.recycle();
+            previewBitmap = null;
+        }
         if (refreshRunnable != null) handler.removeCallbacks(refreshRunnable);
         pdfExecutor.execute(this::closePdfOnWorker);
         pdfExecutor.shutdown();
