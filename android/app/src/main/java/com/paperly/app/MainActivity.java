@@ -590,7 +590,6 @@ public class MainActivity extends Activity {
         if (!isPreviewOpen || pageCards == null || pageIndex < 0 || pageIndex >= pageCards.length) return;
         currentPageIndex = pageIndex;
         updatePreviewCounter();
-        updatePreviewZoomLabel(1f);
         renderPreviewPage(pageIndex);
     }
 
