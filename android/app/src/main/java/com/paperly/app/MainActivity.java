@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
     private static final int REQ_OPEN_PDF = 101;
     private static final int REQ_PICK_IMAGES = 102;
     private static final int REQ_SAVE_PDF = 103;
+    private static final int REQ_DEFAULT_PDF_SETUP = 104;
 
     private LinearLayout root;
     private LinearLayout body;
@@ -111,6 +112,9 @@ public class MainActivity extends Activity {
         buildShell();
         showHome();
         handleIncomingIntent(getIntent());
+        if (Intent.ACTION_MAIN.equals(getIntent().getAction())) {
+            handler.postDelayed(this::maybeOfferDefaultPdfSetup, 450);
+        }
     }
 
     @Override
@@ -283,6 +287,47 @@ public class MainActivity extends Activity {
         button.setOnClickListener(listener);
         card.addView(button, new LinearLayout.LayoutParams(-1, dp(48)));
         return card;
+    }
+
+    private void maybeOfferDefaultPdfSetup() {
+        android.content.SharedPreferences preferences = getPreferences(MODE_PRIVATE);
+        if (preferences.getBoolean("default_pdf_setup_seen", false) || isFinishing()) return;
+
+        preferences.edit().putBoolean("default_pdf_setup_seen", true).apply();
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Make Paperly your PDF opener?")
+                .setMessage("Android requires you to confirm the default app. Continue, choose one PDF, then select Paperly and tap Always. Paperly will then open PDFs from compatible apps.")
+                .setPositiveButton("Set as default", (dialog, which) -> choosePdfForDefaultSetup())
+                .setNegativeButton("Not now", null)
+                .show();
+    }
+
+    private void choosePdfForDefaultSetup() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("application/pdf");
+        pick.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(pick, REQ_DEFAULT_PDF_SETUP);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open the document picker.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void askAndroidToSetPaperlyAsPdfViewer(Uri uri) {
+        rememberImagePermission(uri);
+        Intent view = new Intent(Intent.ACTION_VIEW);
+        view.setDataAndType(uri, "application/pdf");
+        view.addCategory(Intent.CATEGORY_DEFAULT);
+        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            // Do not wrap this in createChooser: Android's resolver needs to offer its
+            // Always option so the user can save Paperly as the preferred PDF handler.
+            startActivity(view);
+        } catch (Exception e) {
+            Toast.makeText(this, "Android could not open this PDF. Try opening it from Files and choosing Paperly.", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void openPdfPicker() {
@@ -1294,7 +1339,9 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null) return;
-        if (requestCode == REQ_OPEN_PDF && data.getData() != null) {
+        if (requestCode == REQ_DEFAULT_PDF_SETUP && data.getData() != null) {
+            askAndroidToSetPaperlyAsPdfViewer(data.getData());
+        } else if (requestCode == REQ_OPEN_PDF && data.getData() != null) {
             Uri uri = data.getData();
             rememberImagePermission(uri);
             currentDocumentName = displayName(uri);
