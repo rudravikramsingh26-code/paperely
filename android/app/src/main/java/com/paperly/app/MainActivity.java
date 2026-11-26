@@ -31,6 +31,8 @@ import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -38,6 +40,7 @@ import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -50,6 +53,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -63,11 +68,25 @@ public class MainActivity extends Activity {
     private static final int REQ_PICK_IMAGES = 102;
     private static final int REQ_SAVE_PDF = 103;
     private static final int REQ_DEFAULT_PDF_SETUP = 104;
+    private static final int REQ_PICK_COMPRESS_IMAGES = 105;
+    private static final int REQ_SAVE_COMPRESSED_ZIP = 106;
 
     private LinearLayout root;
     private LinearLayout body;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService pdfExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
+    private final List<Uri> compressionSources = new ArrayList<>();
+    private final List<CompressedImage> compressedImages = new ArrayList<>();
+    private LinearLayout compressionPreview;
+    private TextView compressionStatus;
+    private Spinner compressionLevelSpinner;
+    private Spinner compressionFormatSpinner;
+    private Button compressionRunButton;
+    private Button compressionSaveButton;
+    private volatile int compressionTaskToken = 0;
+    private boolean compressionRunning = false;
+    private boolean isImageCompressorOpen = false;
     private volatile int documentToken = 0;
     private PdfRenderer pdfRenderer;
     private ParcelFileDescriptor pdfDescriptor;
@@ -227,22 +246,23 @@ public class MainActivity extends Activity {
     }
 
     private void showHome() {
+        isImageCompressorOpen = false;
         body.removeAllViews();
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout content = column();
         content.setPadding(dp(24), dp(42), dp(24), dp(40));
 
-        TextView eyebrow = text("A SIMPLE PDF WORKSPACE", 10, MUTED, true);
+        TextView eyebrow = text("A SIMPLE FILE WORKSPACE", 10, MUTED, true);
         eyebrow.setLetterSpacing(0.16f);
         content.addView(eyebrow);
 
-        TextView title = text("PDF, simply.", 38, INK, true);
+        TextView title = text("PDF & images, simply.", 34, INK, true);
         title.setLetterSpacing(-0.055f);
         LinearLayout.LayoutParams titleLp = margins(0, dp(12), 0, dp(8));
         content.addView(title, titleLp);
 
-        TextView subtitle = text("Open a document and see every page.\nOr turn your images into one PDF.", 15, MUTED, false);
+        TextView subtitle = text("Open PDFs, create documents from images, or compress images while keeping their dimensions.", 15, MUTED, false);
         subtitle.setLineSpacing(dp(3), 1f);
         content.addView(subtitle, margins(0, 0, 0, dp(30)));
 
@@ -253,6 +273,10 @@ public class MainActivity extends Activity {
         content.addView(actionCard("▧", "Create a PDF",
                 "Choose your images, give the file a name and save it.",
                 "Create PDF", false, v -> showCreate()), margins(0, 0, 0, dp(22)));
+
+        content.addView(actionCard("◩", "Compress images",
+                "Reduce image file sizes or convert between common formats.",
+                "Compress images", false, v -> showImageCompressor()), margins(0, 0, 0, dp(22)));
 
         TextView defaultHint = text("To make Paperly your default: open any PDF, choose Paperly, then tap “Always”.", 12, MUTED, false);
         defaultHint.setGravity(Gravity.CENTER);
@@ -803,6 +827,7 @@ public class MainActivity extends Activity {
     }
 
     private void showCreate() {
+        isImageCompressorOpen = false;
         body.removeAllViews();
         LinearLayout screen = column();
         screen.setPadding(dp(20), dp(14), dp(20), dp(20));
@@ -1030,6 +1055,466 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             return null;
         }
+    }
+
+
+    private static class CompressedImage {
+        final Uri source;
+        final String sourceName;
+        final long originalBytes;
+        final File outputFile;
+        final String outputName;
+        final String outputMime;
+        final long outputBytes;
+
+        CompressedImage(Uri source, String sourceName, long originalBytes,
+                        File outputFile, String outputName, String outputMime) {
+            this.source = source;
+            this.sourceName = sourceName;
+            this.originalBytes = originalBytes;
+            this.outputFile = outputFile;
+            this.outputName = outputName;
+            this.outputMime = outputMime;
+            this.outputBytes = outputFile.length();
+        }
+    }
+
+    private void showImageCompressor() {
+        compressionTaskToken++;
+        compressionRunning = false;
+        isImageCompressorOpen = true;
+        body.removeAllViews();
+
+        LinearLayout screen = column();
+        screen.setPadding(dp(20), dp(14), dp(20), dp(20));
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        Button back = button("←", false);
+        back.setOnClickListener(v -> {
+            compressionTaskToken++;
+            compressionRunning = false;
+            isImageCompressorOpen = false;
+            showHome();
+        });
+        top.addView(back);
+        TextView heading = text("Compress images", 19, INK, true);
+        LinearLayout.LayoutParams headingLp = new LinearLayout.LayoutParams(0, -2, 1);
+        headingLp.leftMargin = dp(12);
+        top.addView(heading, headingLp);
+        screen.addView(top, margins(0, 0, 0, dp(16)));
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = column();
+
+        LinearLayout drop = column();
+        drop.setGravity(Gravity.CENTER);
+        drop.setPadding(dp(18), dp(23), dp(18), dp(23));
+        drop.setBackground(round(Color.rgb(252, 252, 250), LINE, 16));
+        TextView addTitle = text("Choose images to compress", 16, INK, true);
+        TextView addHint = text("JPG / JPEG, PNG, WebP and other Android-supported images", 12, MUTED, false);
+        addHint.setGravity(Gravity.CENTER);
+        Button add = button("Choose images", true);
+        add.setOnClickListener(v -> pickCompressionImages());
+        drop.addView(addTitle);
+        drop.addView(addHint, margins(0, dp(4), 0, dp(14)));
+        drop.addView(add);
+        content.addView(drop);
+
+        TextView selectedLabel = text("SELECTED IMAGES", 10, MUTED, true);
+        selectedLabel.setLetterSpacing(0.12f);
+        content.addView(selectedLabel, margins(0, dp(21), 0, dp(8)));
+        compressionPreview = column();
+        content.addView(compressionPreview);
+
+        TextView settingsLabel = text("COMPRESSION SETTINGS", 10, MUTED, true);
+        settingsLabel.setLetterSpacing(0.12f);
+        content.addView(settingsLabel, margins(0, dp(21), 0, dp(8)));
+
+        TextView qualityLabel = text("Compression level", 12, MUTED, true);
+        content.addView(qualityLabel, margins(0, 0, 0, dp(6)));
+        compressionLevelSpinner = createCompressionSpinner(new String[]{
+                "Low · Best quality (92%)",
+                "Medium · Balanced (80%)",
+                "High · Smaller files (66%)"
+        });
+        compressionLevelSpinner.setSelection(1);
+        content.addView(compressionLevelSpinner, new LinearLayout.LayoutParams(-1, dp(50)));
+
+        TextView formatLabel = text("Convert to", 12, MUTED, true);
+        content.addView(formatLabel, margins(0, dp(14), 0, dp(6)));
+        compressionFormatSpinner = createCompressionSpinner(new String[]{
+                "Keep original format",
+                "JPG / JPEG",
+                "PNG · Lossless",
+                "WebP"
+        });
+        content.addView(compressionFormatSpinner, new LinearLayout.LayoutParams(-1, dp(50)));
+
+        TextView qualityHint = text("Image dimensions are preserved. PNG stays lossless; quality levels apply to JPEG and WebP.", 11, MUTED, false);
+        qualityHint.setLineSpacing(dp(2), 1f);
+        content.addView(qualityHint, margins(0, dp(10), 0, dp(4)));
+
+        compressionRunButton = button("Compress images", true);
+        compressionRunButton.setOnClickListener(v -> compressSelectedImages());
+        content.addView(compressionRunButton, margins(0, dp(16), 0, dp(8)));
+
+        compressionSaveButton = button("Save all as ZIP", false);
+        compressionSaveButton.setEnabled(false);
+        compressionSaveButton.setOnClickListener(v -> startSaveCompressedZip());
+        content.addView(compressionSaveButton, margins(0, 0, 0, dp(8)));
+
+        compressionStatus = text("Choose one or more images to begin.", 12, MUTED, false);
+        compressionStatus.setLineSpacing(dp(2), 1f);
+        content.addView(compressionStatus);
+
+        scroll.addView(content);
+        screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        body.addView(screen, new LinearLayout.LayoutParams(-1, -1));
+
+        AdapterView.OnItemSelectedListener invalidateListener = new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (!compressedImages.isEmpty()) {
+                    clearCompressedImageResults();
+                    refreshCompressionPreview();
+                    if (compressionStatus != null) compressionStatus.setText(
+                            "Settings changed. Compress the images again to apply them.");
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) { }
+        };
+        compressionLevelSpinner.setOnItemSelectedListener(invalidateListener);
+        compressionFormatSpinner.setOnItemSelectedListener(invalidateListener);
+        refreshCompressionPreview();
+    }
+
+    private Spinner createCompressionSpinner(String[] options) {
+        Spinner spinner = new Spinner(this);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this, android.R.layout.simple_spinner_item, options);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setBackground(round(WHITE, LINE, 11));
+        spinner.setPadding(dp(10), 0, dp(10), 0);
+        return spinner;
+    }
+
+    private void pickCompressionImages() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, REQ_PICK_COMPRESS_IMAGES);
+    }
+
+    private void addCompressionImages(Intent data) {
+        clearCompressedImageResults();
+        if (data.getClipData() != null) {
+            for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                Uri uri = data.getClipData().getItemAt(i).getUri();
+                rememberImagePermission(uri);
+                if (!compressionSources.contains(uri)) compressionSources.add(uri);
+            }
+        } else if (data.getData() != null) {
+            Uri uri = data.getData();
+            rememberImagePermission(uri);
+            if (!compressionSources.contains(uri)) compressionSources.add(uri);
+        }
+        refreshCompressionPreview();
+        if (compressionStatus != null) {
+            compressionStatus.setText(compressionSources.size()
+                    + " image(s) selected. Original dimensions will be kept.");
+        }
+    }
+
+    private void clearCompressedImageResults() {
+        for (CompressedImage item : compressedImages) {
+            if (item.outputFile != null && item.outputFile.exists()) item.outputFile.delete();
+        }
+        compressedImages.clear();
+        if (compressionSaveButton != null) compressionSaveButton.setEnabled(false);
+    }
+
+    private long getUriSize(Uri uri) {
+        try (Cursor cursor = getContentResolver().query(uri,
+                new String[]{OpenableColumns.SIZE}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index);
+            }
+        } catch (Exception ignored) { }
+        return -1L;
+    }
+
+    private String readableBytes(long bytes) {
+        if (bytes < 0) return "Size unavailable";
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(java.util.Locale.US, "%.1f KB", bytes / 1024.0);
+        return String.format(java.util.Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0));
+    }
+
+    private void refreshCompressionPreview() {
+        if (compressionPreview == null) return;
+        compressionPreview.removeAllViews();
+        if (compressionSources.isEmpty()) {
+            TextView empty = text("No images selected yet.", 12, MUTED, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(0, dp(14), 0, dp(14));
+            compressionPreview.addView(empty);
+        } else {
+            for (int i = 0; i < compressionSources.size(); i++) {
+                Uri uri = compressionSources.get(i);
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(12), dp(9), dp(7), dp(9));
+                row.setBackground(round(WHITE, LINE, 12));
+
+                LinearLayout details = column();
+                TextView name = text(displayName(uri), 12, INK, true);
+                name.setSingleLine(true);
+                name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+                details.addView(name);
+                String info = readableBytes(getUriSize(uri));
+                for (CompressedImage result : compressedImages) {
+                    if (result.source.equals(uri)) {
+                        info += "  →  " + readableBytes(result.outputBytes);
+                        break;
+                    }
+                }
+                details.addView(text(info, 11, MUTED, false), margins(0, dp(3), 0, 0));
+                row.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
+
+                Button remove = button("×", false);
+                remove.setTextSize(18);
+                remove.setPadding(dp(10), 0, dp(10), 0);
+                final int index = i;
+                remove.setOnClickListener(v -> {
+                    compressionTaskToken++;
+                    compressionRunning = false;
+                    clearCompressedImageResults();
+                    if (index < compressionSources.size()) compressionSources.remove(index);
+                    refreshCompressionPreview();
+                    if (compressionRunButton != null) compressionRunButton.setEnabled(!compressionSources.isEmpty());
+                    if (compressionStatus != null) compressionStatus.setText("Image removed.");
+                });
+                row.addView(remove, new LinearLayout.LayoutParams(dp(42), dp(42)));
+                compressionPreview.addView(row, margins(0, 0, 0, dp(8)));
+            }
+        }
+        if (compressionRunButton != null) compressionRunButton.setEnabled(
+                !compressionSources.isEmpty() && !compressionRunning);
+        if (compressionSaveButton != null) compressionSaveButton.setEnabled(
+                !compressionRunning && !compressedImages.isEmpty()
+                        && compressedImages.size() == compressionSources.size());
+    }
+
+    private String getSourceMime(Uri uri) {
+        String mime = getContentResolver().getType(uri);
+        if (mime != null) {
+            mime = mime.toLowerCase(java.util.Locale.US);
+            if ("image/jpeg".equals(mime) || "image/png".equals(mime) || "image/webp".equals(mime)) {
+                return mime;
+            }
+        }
+        String name = displayName(uri).toLowerCase(java.util.Locale.US);
+        if (name.endsWith(".png")) return "image/png";
+        if (name.endsWith(".webp")) return "image/webp";
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+        return "image/jpeg";
+    }
+
+    private String chooseCompressionMime(Uri source, int formatChoice) {
+        if (formatChoice == 1) return "image/jpeg";
+        if (formatChoice == 2) return "image/png";
+        if (formatChoice == 3) return "image/webp";
+        return getSourceMime(source);
+    }
+
+    private String extensionForMime(String mime) {
+        if ("image/png".equals(mime)) return "png";
+        if ("image/webp".equals(mime)) return "webp";
+        return "jpg";
+    }
+
+    private String safeImageBaseName(String name) {
+        String base = name.replaceAll("\\.[^.]*$", "")
+                .replaceAll("[\\\\/:*?\"<>|]", "-").trim();
+        return base.isEmpty() ? "image" : base;
+    }
+
+    private File compressOneImage(Uri source, String name, String mime, int quality) throws Exception {
+        Bitmap bitmap;
+        try (InputStream input = getContentResolver().openInputStream(source)) {
+            if (input == null) throw new IllegalStateException("Could not open " + name);
+            bitmap = BitmapFactory.decodeStream(input);
+        }
+        if (bitmap == null) throw new IllegalStateException("Unsupported or unreadable image: " + name);
+
+        Bitmap toCompress = bitmap;
+        Bitmap flattened = null;
+        Bitmap.CompressFormat compressFormat;
+        if ("image/png".equals(mime)) {
+            compressFormat = Bitmap.CompressFormat.PNG;
+        } else if ("image/webp".equals(mime)) {
+            compressFormat = Bitmap.CompressFormat.WEBP;
+        } else {
+            compressFormat = Bitmap.CompressFormat.JPEG;
+            if (bitmap.hasAlpha()) {
+                flattened = Bitmap.createBitmap(bitmap.getWidth(), bitmap.getHeight(), Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(flattened);
+                canvas.drawColor(WHITE);
+                canvas.drawBitmap(bitmap, 0, 0, new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG));
+                toCompress = flattened;
+            }
+        }
+
+        File directory = new File(getCacheDir(), "paperly-compressed");
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw new IllegalStateException("Could not prepare temporary storage.");
+        }
+        File output = File.createTempFile("paperly-image-", "." + extensionForMime(mime), directory);
+        boolean success = false;
+        try (FileOutputStream stream = new FileOutputStream(output)) {
+            int appliedQuality = "image/png".equals(mime) ? 100 : quality;
+            success = toCompress.compress(compressFormat, appliedQuality, stream);
+            stream.flush();
+        } finally {
+            if (flattened != null && !flattened.isRecycled()) flattened.recycle();
+            if (!bitmap.isRecycled()) bitmap.recycle();
+            if (!success && output.exists()) output.delete();
+        }
+        if (!success) throw new IllegalStateException("Could not encode " + name);
+        return output;
+    }
+
+    private void compressSelectedImages() {
+        if (compressionRunning || compressionSources.isEmpty()) return;
+        clearCompressedImageResults();
+        final List<Uri> sources = new ArrayList<>(compressionSources);
+        final int qualityChoice = compressionLevelSpinner.getSelectedItemPosition();
+        final int formatChoice = compressionFormatSpinner.getSelectedItemPosition();
+        final int quality = qualityChoice == 0 ? 92 : (qualityChoice == 2 ? 66 : 80);
+        final int token = ++compressionTaskToken;
+        compressionRunning = true;
+        compressionRunButton.setEnabled(false);
+        compressionSaveButton.setEnabled(false);
+        compressionStatus.setText("Preparing images…");
+
+        imageExecutor.execute(() -> {
+            List<CompressedImage> results = new ArrayList<>();
+            try {
+                for (int i = 0; i < sources.size(); i++) {
+                    Uri uri = sources.get(i);
+                    String name = displayName(uri);
+                    String mime = chooseCompressionMime(uri, formatChoice);
+                    long originalBytes = getUriSize(uri);
+                    File output = compressOneImage(uri, name, mime, quality);
+                    String outputName = safeImageBaseName(name) + "." + extensionForMime(mime);
+                    results.add(new CompressedImage(uri, name, originalBytes, output, outputName, mime));
+                    final int current = i + 1;
+                    runOnUiThread(() -> {
+                        if (token == compressionTaskToken && compressionStatus != null) {
+                            compressionStatus.setText("Compressing image " + current
+                                    + " of " + sources.size() + "…");
+                        }
+                    });
+                }
+
+                runOnUiThread(() -> {
+                    if (token != compressionTaskToken || isFinishing()) {
+                        for (CompressedImage item : results) if (item.outputFile.exists()) item.outputFile.delete();
+                        return;
+                    }
+                    compressedImages.addAll(results);
+                    compressionRunning = false;
+                    refreshCompressionPreview();
+                    long before = 0L, after = 0L;
+                    for (CompressedImage item : compressedImages) {
+                        if (item.originalBytes > 0) before += item.originalBytes;
+                        after += item.outputBytes;
+                    }
+                    String sizeText = before > 0
+                            ? readableBytes(before) + " → " + readableBytes(after)
+                            : readableBytes(after) + " output";
+                    compressionStatus.setText("Done. " + compressedImages.size()
+                            + " image(s) ready. " + sizeText);
+                    if (formatChoice == 2) {
+                        compressionStatus.append("\nPNG is lossless; the selected compression level does not lower PNG quality.");
+                    }
+                });
+            } catch (OutOfMemoryError memoryError) {
+                for (CompressedImage item : results) if (item.outputFile.exists()) item.outputFile.delete();
+                runOnUiThread(() -> {
+                    if (token == compressionTaskToken) {
+                        compressionRunning = false;
+                        refreshCompressionPreview();
+                        compressionStatus.setText("This image is too large to process with the available memory. Try fewer images at once.");
+                    }
+                });
+            } catch (Exception e) {
+                for (CompressedImage item : results) if (item.outputFile.exists()) item.outputFile.delete();
+                runOnUiThread(() -> {
+                    if (token == compressionTaskToken) {
+                        compressionRunning = false;
+                        refreshCompressionPreview();
+                        compressionStatus.setText("Could not process an image. Try a common JPG, PNG or WebP file.");
+                        Toast.makeText(this, "Image compression failed.", Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
+    }
+
+    private void startSaveCompressedZip() {
+        if (compressedImages.isEmpty() || compressedImages.size() != compressionSources.size()) {
+            Toast.makeText(this, "Compress your images first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        save.addCategory(Intent.CATEGORY_OPENABLE);
+        save.setType("application/zip");
+        save.putExtra(Intent.EXTRA_TITLE, "Paperly-compressed-images.zip");
+        startActivityForResult(save, REQ_SAVE_COMPRESSED_ZIP);
+    }
+
+    private void saveCompressedImagesZip(Uri destination) {
+        final List<CompressedImage> results = new ArrayList<>(compressedImages);
+        imageExecutor.execute(() -> {
+            try {
+                OutputStream output = getContentResolver().openOutputStream(destination, "w");
+                if (output == null) throw new IllegalStateException("Could not open the selected save location.");
+                try (ZipOutputStream zip = new ZipOutputStream(output)) {
+                    Set<String> usedNames = new HashSet<>();
+                    byte[] buffer = new byte[64 * 1024];
+                    for (CompressedImage item : results) {
+                        String entryName = item.outputName;
+                        String base = safeImageBaseName(entryName);
+                        String extension = "." + extensionForMime(item.outputMime);
+                        int suffix = 2;
+                        while (!usedNames.add(entryName.toLowerCase(java.util.Locale.US))) {
+                            entryName = base + " (" + suffix++ + ")" + extension;
+                        }
+                        zip.putNextEntry(new ZipEntry(entryName));
+                        try (InputStream input = new FileInputStream(item.outputFile)) {
+                            int read;
+                            while ((read = input.read(buffer)) != -1) zip.write(buffer, 0, read);
+                        }
+                        zip.closeEntry();
+                    }
+                    zip.finish();
+                }
+                runOnUiThread(() -> Toast.makeText(this,
+                        "Compressed images saved as a ZIP.", Toast.LENGTH_LONG).show());
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        "Could not save the compressed images.", Toast.LENGTH_LONG).show());
+            }
+        });
     }
 
     private void startSavePendingPdf() {
@@ -1348,6 +1833,10 @@ public class MainActivity extends Activity {
             openPdf(uri);
         } else if (requestCode == REQ_PICK_IMAGES) {
             addSelectedImages(data);
+        } else if (requestCode == REQ_PICK_COMPRESS_IMAGES) {
+            addCompressionImages(data);
+        } else if (requestCode == REQ_SAVE_COMPRESSED_ZIP && data.getData() != null) {
+            saveCompressedImagesZip(data.getData());
         } else if (requestCode == REQ_SAVE_PDF && data.getData() != null) {
             savePendingPdf(data.getData());
         }
@@ -1355,6 +1844,13 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (isImageCompressorOpen) {
+            compressionTaskToken++;
+            compressionRunning = false;
+            isImageCompressorOpen = false;
+            showHome();
+            return;
+        }
         if (isPreviewOpen) {
             closePagePreview();
             return;
@@ -1373,6 +1869,9 @@ public class MainActivity extends Activity {
         if (refreshRunnable != null) handler.removeCallbacks(refreshRunnable);
         pdfExecutor.execute(this::closePdfOnWorker);
         pdfExecutor.shutdown();
+        compressionTaskToken++;
+        imageExecutor.shutdown();
+        clearCompressedImageResults();
         super.onDestroy();
     }
 }

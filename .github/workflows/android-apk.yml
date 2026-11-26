@@ -48,12 +48,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: paperly-android-${{ github.run_number }}
-          name: Paperly Android v1.0.${{ github.run_number }}
+          name: Paperly Android v2.0.0 (build ${{ github.run_number }})
           body: |
             Paperly for Android.
 
-            A focused PDF viewer and image-to-PDF creator.
-            Documents are handled locally on your device.
+            A focused PDF viewer, image-to-PDF creator and image compressor.
+            Compress images at low, medium or high quality, convert JPG/JPEG, PNG and WebP formats, and save batches as a ZIP.
+            Images and documents are processed locally on your device. No API tokens required.
           files: Paperly.apk
           make_latest: true
         env:

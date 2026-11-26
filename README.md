@@ -10,7 +10,7 @@ Download **Paperly-1.1.0-Setup.exe** from the [Windows release](https://github.c
 
 ## Android app
 
-The Android edition is in `android/`. It supports PDF viewing, page navigation, pinch-to-zoom, sharing PDFs, and creating PDFs from images. Build releases are published by the Android GitHub Actions workflow.
+The Android edition is in `android/`. It supports PDF viewing, page navigation, pinch-to-zoom, sharing PDFs, creating PDFs from images, and batch image compression with low / medium / high quality presets. It can convert common images to JPG/JPEG, PNG or WebP and save compressed batches as a ZIP. Image processing is performed locally on the phone. Build releases are published by the Android GitHub Actions workflow.
 
 ## Browser app
 
