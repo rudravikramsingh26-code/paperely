@@ -1,4 +1,4 @@
-const VERSION = 'paperly-v2';
+const VERSION = 'paperly-v3';
 const APP_CACHE = `${VERSION}-app`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const APP_FILES = ['./', './index.html', './manifest.webmanifest', './icons/paperly.svg'];
@@ -13,7 +13,7 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.hostname === 'cdn.jsdelivr.net' && (url.pathname.includes('/pdfjs-dist/') || url.pathname.includes('/jspdf/'))) {
+  if (url.hostname === 'cdn.jsdelivr.net' && (url.pathname.includes('/pdfjs-dist/') || url.pathname.includes('/jspdf/') || url.pathname.includes('/jszip/'))) {
     event.respondWith((async () => {
       const cache = await caches.open(RUNTIME_CACHE);
       const cached = await cache.match(req);
