@@ -29,12 +29,17 @@ async function main() {
     "import { jsPDF } from 'jspdf';"
   );
   appSource = appSource.replace(
+    /import JSZip from '[^']+';/,
+    "import JSZip from 'jszip';"
+  );
+  appSource = appSource.replace(
     /pdfjsLib\.GlobalWorkerOptions\.workerSrc\s*=\s*[^;]+;/,
     "pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.mjs';"
   );
 
   if (appSource.includes("https://cdn.jsdelivr.net/npm/pdfjs-dist") ||
-      appSource.includes("https://cdn.jsdelivr.net/npm/jspdf")) {
+      appSource.includes("https://cdn.jsdelivr.net/npm/jspdf") ||
+      appSource.includes("https://cdn.jsdelivr.net/npm/jszip")) {
     throw new Error("A CDN import remains; the Windows app must bundle its PDF engines locally.");
   }
 

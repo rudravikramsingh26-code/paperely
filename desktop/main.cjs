@@ -48,6 +48,7 @@ function createMenu() {
       submenu: [
         { label: "Open PDF…", accelerator: "CmdOrCtrl+O", click: () => runPageAction("openBtn") },
         { label: "Create PDF…", accelerator: "CmdOrCtrl+Shift+N", click: () => runPageAction("createBtn") },
+        { label: "Compress images…", accelerator: "CmdOrCtrl+Shift+I", click: () => runPageAction("compressBtn") },
         { type: "separator" },
         { role: "quit", label: "Exit Paperly" }
       ]
@@ -125,16 +126,27 @@ if (!hasSingleInstance) {
 
   app.whenReady().then(() => {
     session.defaultSession.on("will-download", (event, item) => {
-      const fileName = item.getFilename().toLowerCase().endsWith(".pdf")
-        ? item.getFilename()
-        : item.getFilename() + ".pdf";
+      const fileName = path.basename(item.getFilename());
+      const extension = path.extname(fileName).toLowerCase().replace(".", "");
+      const filterByExtension = {
+        pdf: { name: "PDF documents", extensions: ["pdf"] },
+        zip: { name: "ZIP archives", extensions: ["zip"] },
+        jpg: { name: "JPEG images", extensions: ["jpg", "jpeg"] },
+        jpeg: { name: "JPEG images", extensions: ["jpg", "jpeg"] },
+        png: { name: "PNG images", extensions: ["png"] },
+        webp: { name: "WebP images", extensions: ["webp"] }
+      };
+      const selectedFilter = filterByExtension[extension] || {
+        name: "Files", extensions: [extension || "*"]
+      };
       const defaultFolder = path.join(app.getPath("documents"), "Paperly");
       fs.mkdirSync(defaultFolder, { recursive: true });
+      const isPdf = extension === "pdf";
       const chosenPath = dialog.showSaveDialogSync(mainWindow, {
-        title: "Save your PDF",
-        buttonLabel: "Save PDF",
+        title: isPdf ? "Save your PDF" : "Save your file",
+        buttonLabel: "Save",
         defaultPath: path.join(defaultFolder, fileName),
-        filters: [{ name: "PDF documents", extensions: ["pdf"] }]
+        filters: [selectedFilter, { name: "All files", extensions: ["*"] }]
       });
       if (!chosenPath) {
         item.cancel();
