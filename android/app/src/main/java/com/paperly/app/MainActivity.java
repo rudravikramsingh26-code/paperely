@@ -108,17 +108,25 @@ public class MainActivity extends Activity {
         if (intent == null) return;
         Uri incoming = null;
         String action = intent.getAction();
+
         if (Intent.ACTION_VIEW.equals(action)) {
             incoming = intent.getData();
         } else if (Intent.ACTION_SEND.equals(action)) {
-            Object stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
-            if (stream instanceof Uri) incoming = (Uri) stream;
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                incoming = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
+            } else {
+                Object stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                if (stream instanceof Uri) incoming = (Uri) stream;
+            }
+            if (incoming == null && intent.getClipData() != null
+                    && intent.getClipData().getItemCount() > 0) {
+                incoming = intent.getClipData().getItemAt(0).getUri();
+            }
         }
+
         if (incoming != null) {
-            final Uri pdfUri = incoming;
-            rememberImagePermission(pdfUri);
-            currentDocumentName = displayName(pdfUri);
-            openPdf(pdfUri);
+            rememberImagePermission(incoming);
+            openPdf(incoming);
         }
     }
 
@@ -130,7 +138,7 @@ public class MainActivity extends Activity {
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(24), dp(15), dp(24), dp(15));
+        header.setPadding(dp(24), dp(13), dp(24), dp(13));
         header.setBackgroundColor(BG);
 
         TextView logo = text("paperly.", 22, INK, true);
@@ -138,7 +146,8 @@ public class MainActivity extends Activity {
         header.addView(logo, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView caption = text("PDF WORKSPACE", 10, MUTED, true);
-        caption.setLetterSpacing(0.12f);
+        caption.setLetterSpacing(0.14f);
+        caption.setTextSize(9);
         header.addView(caption);
 
         root.addView(header, new LinearLayout.LayoutParams(-1, -2));
@@ -180,9 +189,14 @@ public class MainActivity extends Activity {
                 "Choose your images, give the file a name and save it.",
                 "Create PDF", false, v -> showCreate()), margins(0, 0, 0, dp(22)));
 
-        TextView privacy = text("Your files stay on your device.", 12, MUTED, false);
+        TextView defaultHint = text("To make Paperly your default: open any PDF, choose Paperly, then tap “Always”.", 12, MUTED, false);
+        defaultHint.setGravity(Gravity.CENTER);
+        defaultHint.setLineSpacing(dp(2), 1f);
+        content.addView(defaultHint, margins(0, dp(8), 0, dp(10)));
+
+        TextView privacy = text("Your files stay on your device.", 11, MUTED, false);
         privacy.setGravity(Gravity.CENTER);
-        content.addView(privacy, margins(0, dp(8), 0, 0));
+        content.addView(privacy);
 
         scroll.addView(content);
         body.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
@@ -347,6 +361,8 @@ public class MainActivity extends Activity {
 
         pageScroll = new ScrollView(this);
         pageScroll.setFillViewport(false);
+        pageScroll.setClipToPadding(false);
+        pageScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         pageStack = column();
         pageStack.setPadding(dp(3), dp(5), dp(3), dp(18));
         pageScroll.addView(pageStack);
@@ -790,7 +806,9 @@ public class MainActivity extends Activity {
         button.setMinHeight(0);
         button.setMinimumHeight(0);
         button.setPadding(dp(15), dp(7), dp(15), dp(7));
-        button.setBackground(round(primary ? INK : WHITE, primary ? INK : LINE, 11));
+        button.setBackground(round(primary ? INK : WHITE, primary ? INK : LINE, 14));
+        button.setElevation(0f);
+        button.setStateListAnimator(null);
         button.setTextColor(primary ? WHITE : INK);
         return button;
     }
