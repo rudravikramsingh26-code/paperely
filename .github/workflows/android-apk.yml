@@ -56,12 +56,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: paperly-android-${{ github.run_number }}
-          name: Paperly Android v2.1.0 (build ${{ github.run_number }})
+          name: Paperly Android v2.2.0 (build ${{ github.run_number }})
           body: |
             Paperly for Android.
 
             A focused PDF viewer, image-to-PDF creator and image compressor.
-            Compress images with WebP-focused presets, download individual images directly, or save batches as a ZIP. Individual downloads and batch exports use the Android save picker.
+            The compressor keeps a persistent download action, saves output directly to Downloads/Paperly on Android 10+, and offers individual or batch downloads. WebP presets target strong compression with minimal visible quality loss.
+            After a PDF is generated, Paperly clears the selected image queue for the next document. Original photos are never deleted.
             Images and documents are processed locally on your device. No API tokens required.
           files: Paperly.apk
           make_latest: true

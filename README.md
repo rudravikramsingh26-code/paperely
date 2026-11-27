@@ -10,7 +10,7 @@ Download **Paperly-1.1.0-Setup.exe** from the [Windows release](https://github.c
 
 ## Android app
 
-The Android edition is in `android/`. It supports PDF viewing, page navigation, pinch-to-zoom, sharing PDFs, creating PDFs from images, and batch image compression with quality presets tuned for smaller WebP files and lower visible quality loss. Download each compressed image individually or export a batch as a ZIP. It can convert common images to JPG/JPEG, PNG or WebP. Image processing is performed locally on the phone. Build releases are published by the Android GitHub Actions workflow.
+The Android edition is in `android/`. It supports PDF viewing, page navigation, pinch-to-zoom, sharing PDFs, creating PDFs from images, and batch image compression with WebP-focused presets for strong compression and minimal visible quality loss. On Android 10+, compressed images download directly to `Downloads/Paperly`; each image can be saved individually or the entire batch together. Older Android versions use the system save picker (batch ZIP). After a PDF is generated, the selected images are cleared from Paperly so the next PDF starts fresh; original photos on the device are not deleted. It can convert common images to JPG/JPEG, PNG or WebP. Image processing is performed locally on the phone. Build releases are published by the Android GitHub Actions workflow.
 
 ## Browser app
 
